@@ -155,11 +155,16 @@ function makeInstance( clazz, instanceFields ) {
     return result;
 }
 
-// PORT NOTE: The only point of these is to make sure we can find
-// places in the application code that define new IO constructs.
+// PORT NOTE: Whenever the code relies on the way we're implementing
+// the IO monad, whether as a way to construct an IO value or a way to
+// deconstruct one, it uses at least one of these two functions.
 function asyncIo( op ) {
     return op;
 }
+function unwrapAsyncIo( op ) {
+    return op;
+}
+
 function io( op ) {
     return asyncIo( function ( sync, then ) {
         then( null, op() );
@@ -172,7 +177,7 @@ function id( result ) {
 }
 
 function kfn( result ) {
-    return function ( ignored ) {
+    return function ( var_args ) {   // All args are ignored.
         return result;
     };
 }
@@ -191,22 +196,19 @@ var class_Monad = makeClass( {
 
 var ins_IO_Monad = makeInstance( class_Monad, {
     bind: function ( op, fn ) {
-        return function ( sync, then ) {
+        return asyncIo( function ( sync, then ) {
             var thisSync = true;
-            if ( !op( sync, function ( e, result ) {
+            if ( !unwrapAsyncIo( op )( sync, function ( e, result ) {
                 if ( e ) return void then( e );
-                if ( !fn( result )( sync, then ) )
+                if ( !unwrapAsyncIo( fn( result ) )( sync, then ) )
                     thisSync = false;
             } ) )
                 thisSync = false;
             return thisSync;
-        };
+        } );
     },
     ret: function ( result ) {
-        return function ( sync, then ) {
-            then( result );
-            return true;
-        };
+        return io( kfn( result ) );
     }
 } );
 
