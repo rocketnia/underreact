@@ -182,6 +182,34 @@ function kfn( result ) {
     };
 }
 
+function List_Nil() {}
+List_Nil.prototype.init = function () {
+    return this;
+};
+
+function List_Cons() {}
+List_Cons.prototype.initLazy = function ( getCar, getCdr ) {
+    this.getCar = function () { return getCar(); };
+    this.getCdr = function () { return getCdr(); };
+    return this;
+};
+
+function Maybe_Nothing() {}
+Maybe_Nothing.prototype.init = function () {
+    return this;
+};
+
+function Maybe_Just() {}
+Maybe_Just.prototype.init = function ( just ) {
+    this.just = just;
+    return this;
+};
+
+var class_Functor = makeClass( {
+    fmap: null
+    // PORT TODO: Should we include (<$)?
+} );
+
 var class_Monad = makeClass( {
     // (>>=)
     bind: null,
@@ -192,6 +220,51 @@ var class_Monad = makeClass( {
         return this.bind( a, kfn( b ) );
     }
     // PORT TODO: Should we include fail?
+} );
+
+function map( f ) {
+    function result( ms ) {
+        if ( ms instanceof List_Nil )
+            return ms;
+        var m = ms.getCar(), rest = ms.getCdr();
+        return new List_Cons().initLazy( kfn( f( m ) ), function () {
+            return result( rest );
+        } );
+    };
+    return result;
+}
+
+function sequenceDrop( ins_Monad, ms ) {
+    if ( ms instanceof List_Nil )
+        return ms;
+    var m = ms.getCar(), rest = ms.getCdr();
+    return ins_Monad.bind( m, function ( _ ) {
+        return sequenceDrop( ins_Monad, rest );
+    } );
+}
+
+function mapMDrop( ins_Monad, f ) {
+    return function ( list ) {
+        return sequenceDrop( ins_Monad, map( f )( list ) );
+    };
+}
+
+function when( ins_Monad, condition, m ) {
+    return condition ? m : ins_Monad.ret( [] );
+}
+
+function unless( ins_Monad, condition, m ) {
+    return condition ? ins_Monad.ret( [] ) : m;
+}
+
+var ins_Maybe_Functor = makeInstance( class_Functor, {
+    fmap: function ( fn ) {
+        return function ( maybe ) {
+            if ( maybe instanceof Maybe_Nothing )
+                return maybe;
+            return new Maybe_Just().init( fn( maybe.just ) );
+        };
+    }
 } );
 
 var ins_IO_Monad = makeInstance( class_Monad, {
@@ -224,27 +297,6 @@ var ins_jsNum_Ord = makeInstance( class_Ord, {
         return a < b;
     }
 } );
-
-function Maybe_Nothing() {}
-Maybe_Nothing.prototype.init = function () {
-    return this;
-};
-
-function unless( ins_Monad, condition, m ) {
-    return condition ? ins_Monad.ret( [] ) : m;
-}
-
-function List_Nil() {}
-List_Nil.prototype.init = function () {
-    return this;
-};
-
-function List_Cons() {}
-List_Cons.prototype.initAsync = function ( getCar, getCdr ) {
-    this.getCar = function () { return getCar(); };
-    this.getCdr = function () { return getCdr(); };
-    return this;
-};
 
 // PORT NOTE: The "v" is for vector.
 var class_AdditiveGroup = makeClass( {
@@ -555,6 +607,8 @@ var class_BSig = makeClass( {
     bconv: null
 } );
 
+// bdrop :: (BSig b u t, SigShadow s u t, SigShadow u s t)
+//     => b x (s ())
 function bdrop( ins_BSig, ins_SigShadow_in, ins_SigShadow_out ) {
     int_BSig.ins_Category.then( int_BSig.bunit(),
         int_BSig.buconv( ins_SigShadow_in, ins_SigShadow_out ) );
@@ -832,5 +886,321 @@ function monce( ins_VatCB, ins_StepCB, op ) {
 
 
 
+// Link.lhs
+
+function LinkUp_LinkUp() {}
+LinkUp_LinkUp.prototype.init = function ( lu_update, lu_stable ) {
+    this.getLu_update = function () { return lu_update; };
+    this.getLu_stable = function () { return lu_stable; };
+    return this;
+};
+
+function lu_time( ins_Signal, linkUp ) {
+    return ins_Maybe_Functor.fmap( function ( lu_update ) {
+        return ins_Signal.su_time( lu_update );
+    } )( linkUp.getLu_update() );
+}
+
+function luTerminate( ins_Signal, tmTerm ) {
+    var su = ins_Signal.s_future( tmTerm, ins_Signal.s_never() );
+    return new LinkUp_LinkUp.init(
+        new Maybe_Just( su ), new Maybe_Nothing() );
+}
+
+var class_Link = makeClass( {
+    ins_Vat: null,
+    ins_BSig: null,
+    mkLink: null,
+    mkLinkDrop: null
+} );
+
+var class_BLink = makeClass( {
+    ins_HasVar: null,
+    ins_Link: null,
+    // -- | Build a full BLink, with developer maintaining response.
+    // mkBLink :: (SigShadow s' u t, SigShadow u s' t)
+    //         => BLMeta
+    //         -> st     -- initial state for new links
+    //         -> ((BLRec t v st s' r) -> (LinkUp t s d) -> v ())
+    //             -- event callback
+    //         -> v (b (s d) (s' r))  -- produces new agent
+    mkBLink: null
+} );
+
+// mkBLink_ ::
+//     (BLink v b u t, BProd b, SigShadow u s t, SigShadow s u t)
+//     => st -> ((BLRec t v st s ()) -> (LinkUp t s d) -> v ())
+//     -> v (b (s d) (s ()))
+function mkBLinkDrop( ins_BLink, ins_BProd,
+    ins_SigShadow_out, ins_SigShadow_in, s0, cb ) {
+    
+    var m = ins_BLink.ins_HasVar.ins_Monad;
+    var p = ins_BProd.ins_BProdBase;
+    var s = ins_BLink.ins_Link.ins_BSig;
+    var c = s.ins_Category;
+    return m.bind(
+        ins_BLink.mkBLink( ins_SigShadow_in, ins_SigShadow_out,
+            blMetaDefault, s0, cb ),
+        function ( f ) {
+            return m.ret( c.then( p.bdup(), c.then(
+                p.bboth( f,
+                    bdrop( s, ins_SigShadow_in, ins_SigShadow_out ) ),
+                p.bsnd() ) ) );
+        } );
+}
+
+function BLRec_BLRec() {}
+BLRec_BLRec.prototype.init = function ( bl_state, bl_link, bl_drop ) {
+    this.getBl_state = function () { return bl_state; };
+    this.getBl_link = function () { return bl_link; };
+    this.getBl_drop = function () { return bl_drop; };
+    return this;
+};
+
+// TODO: Finish Link.lhs.
 
 
+
+
+
+
+
+
+
+
+/*
+
+-- | Some meta-data to support composable optimizations.
+data BLMeta = BLMeta
+    { bl_query :: Bool   -- | pure query; dead code if response dropped
+    , bl_tsen  :: Bool   -- | time-sensitive; don't shift across delay
+    , bl_show  :: String -- | indicator of purpose, for show or debug
+    }
+
+blMetaDefault :: BLMeta
+blMetaDefault = BLMeta 
+    { bl_query = False
+    , bl_tsen  = True 
+    , bl_show  = "BLink"
+    }
+
+
+--------------------------------
+-- Some convenience Operators --
+--------------------------------
+
+-- | simplified link-update. This uses the vat's time, plus an 
+-- offset, to turn a provided signal into an update. The same
+-- offset is used to determine stability. 
+linkUpdate :: (Monad v, Signal s (Time v), HasClock v)
+    => Diff (Time v)                   -- stability & time offset
+    -> ((LinkUp (Time v) s r) -> v ()) -- main update cap
+    -> s r -> v ()
+linkUpdate dt luSend = op
+  where dtf    = if (dt == zeroV) then id else (.+^ dt)  
+        op sig = 
+            getTime >>= \ tNow -> 
+            let tm = dtf tNow
+                su = s_future tm sig
+                lu = LinkUp { lu_update = Just su
+                            , lu_stable = Just tm  }
+            in luSend lu
+    
+
+-- | A common pattern in reactive systems is to observe a variable
+-- without influencing it. RDP favors demand driven behaviors, where
+-- observation is a form of influence (i.e. whether the reference is
+-- maintained or not), but can model simple reactive observation. In
+-- order to support anticipation, an observable reference updates as
+-- an RDP link. I call this a LinkRef.
+--
+-- A LinkRef must be active whenever there is at least one observer.
+-- In most cases, developers will keep it active at all times after
+-- construction, until application shutdown. When a resource will
+-- always be observed, this won't hurt performance. If necessary,
+-- developers can use a demand monitor to track observers precisely.
+--
+-- LinkRef must be regularly updated to clear histories and maintain
+-- signal stability. Each LinkRef keeps a copy of its signal so far,
+-- which it must mask per observer link (for duration coupling).
+--
+mkLinkRef :: (BLink v b u t, SigShadow s u t, SigShadow u s t)
+          => String                    -- ^ debug string
+          -> Diff t                    -- ^ extra history to keep
+          -> v ((LinkUp t s x -> v ()) -- ^ to update the reference
+               ,b (s ()) (s x)         -- ^ to share the reference
+               )
+mkLinkRef sDebug = mkLinkRefD sDebug ignoreSub
+    where ignoreSub = const $ return ()
+
+-- | mkLinkRefD offers developers a very coarse estimate of demand,
+-- basically whether there are any subscribers or not, as a callback
+-- event. This is imprecise, since it will report a subscriber even
+-- when the subscriber does not currently need the response. Use of
+-- a demand monitor is STRONGLY recommended if trying to optimize an
+-- expensive resource, like network.
+--
+-- But in many cases this estimate is sufficient and convenient, and
+-- the overhead of an extra demand monitor and signal analysis might
+-- be difficult to justify. Use the event to start or stop polling
+-- loops for mouse input, for example.
+--
+-- The event is simple: Bool -> Action, with the Bool indicating if
+-- there is at least one subscriber.
+--
+-- Otherwise, mkLinkRefD behaves the same as mkLinkRef.
+--
+mkLinkRefD :: (BLink v b u t, SigShadow s u t, SigShadow u s t)
+           => String                    -- ^ debug string
+           -> (Bool -> v ())            -- ^ event indicating interest
+           -> Diff t                    -- ^ extra history to keep
+           -> v ((LinkUp t s x -> v ()) -- ^ to update the reference
+                ,b (s ()) (s x)         -- ^ to share the reference
+                )
+mkLinkRefD sDebug onSub dtHist =
+    newVar Nothing     >>= \ vSig ->
+    newVar (1,M.empty) >>= \ vObs ->
+    let onLU = lrefOnLU fdt onSub vSig vObs 
+        onBL = lrefOnBL onSub vSig vObs
+        blm  = BLMeta { bl_query = True, bl_tsen = True, bl_show = sDebug }
+        st0  = (0,(s_never,Nothing)) 
+    in
+    mkBLink blm st0 onBL >>= \ bl ->
+    return (onLU, bl)
+    where fdt = if (dtHist == zeroV) then id else (.-^ dtHist)
+
+-- SUMMARY OF LINKREF STATE:
+--   vSig - Maybe (s x, Maybe t)
+--     Nothing      - initial state only; awaiting first update
+--     Just (sl,tl) - current state-signal and stability
+--   vObs - (Integer, Map: Integer -> BLRec)
+--     First integer is to label new subscribers.
+--     Map simply stores subscribers.
+--   BLRec - (Integer, (s (), Maybe t))
+--     Integer identifies subscripion, or 0 for not subscribed.
+--     With demand signal and last reported stability.
+--
+-- NOTES:
+-- * It is important that subscribers update based on the pre-cut
+--   state of the signal, after each signal update. This ensures
+--   that 'lossiness' only occurs to new subscribers.
+-- * In general, a subscriber will process an update immediately
+--   after updating the subscription. (The exception is if the
+--   LinkRef is still uninitialized.)
+-- * Subscribe whenever we might be interested in future updates.
+-- * Use s_term to decide when to unsubscribe.
+type LRSigSt    t s x   = Maybe (s x, Maybe t)
+type LRObsSt  v t s x   = (Integer, LRObsMap v t s x)
+type LRBLSt     t s     = (Integer, (s (), Maybe t))
+type LRBLRec  v t s x   = BLRec t v (LRBLSt t s) s x 
+type LRObsMap v t s x   = M.Map Integer (LRBLRec v t s x)
+
+-- receives a subscriber update.
+lrefOnBL :: (Signal s t, Vat v, HasVar v)
+    => (Bool -> v ())
+    -> Var v (LRSigSt t s x)
+    -> Var v (LRObsSt v t s x)
+    -> LRBLRec v t s x
+    -> LinkUp t s () 
+    -> v ()
+lrefOnBL onSub vSig vObs blr lu = 
+    readVar (bl_state blr) >>= \ (ix,(s0,_)) ->
+    readVar vSig >>= \ ls ->
+    let sf = maybe s0 (su_apply s0) (lu_update lu)
+        tf = lu_stable lu
+    in
+    case ls of
+      Nothing ->
+        -- uninitialized source. Do not cut the initial 
+        -- history; wait for first update to LinkRef.
+        sf `seq` writeVar (bl_state blr) (ix,(sf,tf)) >>
+        lrefSubscribe onSub vObs blr
+      Just (sl,tl) ->
+        -- cut the demand history immediately, just as with a source
+        -- update. Decide whether to subscribe or unsubscribe. Send
+        -- an update based on sl and the new demand.
+        let tx   = tmin tl tf 
+            sfc  = maybe s_never (snd . s_sample sf) tx
+            bdone = maybe True (s_term sfc) tx
+            autoSubscribe = if bdone then lrefUnsubscribe else lrefSubscribe
+            slm  = s_mask sl sf
+            tu   = lu_time lu
+            slu  = fmap (flip s_future slm) tu 
+            lux  = LinkUp { lu_update = slu, lu_stable = tx }
+        in
+        -- update the BLRec state, and maybe subscribe.
+        sfc `seq` writeVar (bl_state blr) (ix,(sfc,tf)) >>
+        autoSubscribe onSub vObs blr >>
+        bl_link blr lux
+
+lrefOnLU :: (Signal s t, Vat v, HasVar v)
+    => (t -> t)
+    -> (Bool -> v ())
+    -> Var v (LRSigSt t s x)
+    -> Var v (LRObsSt v t s x)
+    -> LinkUp t s x
+    -> v ()
+lrefOnLU cutHist onSub vSig vObs lu =
+    -- first update the link's signal history to support future
+    -- subscribers.
+    readVar vSig >>= \ ls ->
+    let tl  = lu_stable lu 
+        sl0 = maybe s_never fst ls
+        sl  = maybe sl0 (su_apply sl0) (lu_update lu)
+        slc = maybe sl (snd . s_sample sl . cutHist) tl
+    in 
+    slc `seq` writeVar vSig (Just (slc,tl)) >>
+
+    -- second, process each subscriber, and possibly unsubscribe.
+    readVar vObs >>= \ (_,omap) ->
+    forM_ (M.elems omap) $ \ blr ->
+        readVar (bl_state blr) >>= \ (ix,(sd,td)) ->
+        let tx    = tmin tl td
+            sdc   = maybe s_never (snd . s_sample sd) tx
+            bdone = maybe True (s_term sdc) tx 
+            slm   = s_mask sl sd
+            tu    = lu_time lu
+            slu   = fmap (flip s_future slm) tu
+            lux   = LinkUp { lu_update = slu, lu_stable = tx }
+         in 
+         sdc `seq` writeVar (bl_state blr) (ix,(sdc,td)) >>
+         when bdone (lrefUnsubscribe onSub vObs blr) >>
+         bl_link blr lux
+    
+    
+lrefSubscribe,lrefUnsubscribe 
+    :: (Signal s t, Vat v, HasVar v)
+    => (Bool -> v ())
+    -> Var v (LRObsSt v t s x)
+    -> LRBLRec v t s x
+    -> v ()
+lrefSubscribe onSub vObs blr =
+    readVar (bl_state blr) >>= \ (ix,sig) ->
+    when (ix == 0) $
+        readVar vObs >>= \ (iNxt,m) ->
+        writeVar (bl_state blr) (iNxt,sig) >>
+        let m'    = M.insert iNxt blr m 
+            iNxt' = succ iNxt  
+        in
+        m' `seq` writeVar vObs (iNxt', m') >>
+        when (M.null m) (eventually $ onSub True)
+
+lrefUnsubscribe onSub vObs blr =
+    readVar (bl_state blr) >>= \ (ix,sig) ->
+    when (ix /= 0) $
+        writeVar (bl_state blr) (0,sig) >>
+        readVar vObs >>= \ (iNxt,m) ->
+        let m' = M.delete ix m in
+        m' `seq` writeVar vObs (iNxt,m') >>
+        when (M.null m') (eventually $ onSub False)
+
+tmin :: (Ord t) => Maybe t -> Maybe t -> Maybe t
+tmin Nothing y = y
+tmin x Nothing = x
+tmin (Just x) (Just y) = Just (min x y)
+
+
+\end{code}
+
+
+*/
