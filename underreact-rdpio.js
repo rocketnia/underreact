@@ -112,7 +112,7 @@
 // PORT TODO: Implement the following core Haskell functionality (or
 // library functionality, as the case may be):
 //
-// newChan readChan
+// (Actually, there's nothing more to implement at the moment.)
 
 // PORT TODO: Implement the following dependencies of RDPIO.lhs:
 //
@@ -180,6 +180,39 @@ function kfn( result ) {
     return function ( var_args ) {   // All args are ignored.
         return result;
     };
+}
+
+function Chan() {}
+Chan.prototype.init = function () {
+    this.elements_ = [];
+    this.listeners_ = [];
+    return this;
+};
+
+var newChan = kfn( io( function () {
+    return new Chan().init();
+} ) );
+
+function readChan( chan ) {
+    return asyncIo( function ( sync, then ) {
+        if ( chan.elements_.length !== 0 )
+            return then( null, chan.elements_.shift() ), true;
+        chan.listeners_.push( then );
+        return false;
+    } );
+}
+
+function writeChan( chan, element ) {
+    return io( function () {
+        chan.elements_.push( element );
+        setTimeout( function () {
+            if ( chan.listeners_.length !== 0 &&
+                chan.elements_.length !== 0 )
+                chan.listeners_.shift()(
+                    null, chan.elements_.shift() );
+        }, 0 );
+        return [];
+    } );
 }
 
 function List_Nil() {}
@@ -285,14 +318,28 @@ var ins_IO_Monad = makeInstance( class_Monad, {
     }
 } );
 
+var class_Eq = makeClass( {
+    // (==)
+    eq: null
+    // PORT TODO: See if there are other members of this class.
+} );
+
 var class_Ord = makeClass( {
+    ins_Eq: null,
     // (<)
     lt: null
     // PORT TODO: Should we include Haskell's other Ord operations in
     // here as well?
 } );
 
+var ins_jsNum_Eq = makeInstance( class_Eq, {
+    eq: function ( a, b ) {
+        return a === b;
+    }
+} );
+
 var ins_jsNum_Ord = makeInstance( class_Ord, {
+    ins_Eq: ins_jsNum_Eq,
     lt: function ( a, b ) {
         return a < b;
     }
@@ -313,6 +360,11 @@ var class_AffineSpace = makeClass( {
     // (.+^)
     plusV: null
 } );
+
+function minusV( ins_AffineSpace, point, vector ) {
+    return ins_AffineSpace.plusV(
+        point, ins_AffineSpace.ins_AdditiveGroup.negateV( vector ) );
+}
 
 
 
@@ -904,7 +956,7 @@ function lu_time( ins_Signal, linkUp ) {
 function luTerminate( ins_Signal, tmTerm ) {
     var su = ins_Signal.s_future( tmTerm, ins_Signal.s_never() );
     return new LinkUp_LinkUp.init(
-        new Maybe_Just( su ), new Maybe_Nothing() );
+        new Maybe_Just().init( su ), new Maybe_Nothing().init() );
 }
 
 var class_Link = makeClass( {
@@ -957,6 +1009,101 @@ BLRec_BLRec.prototype.init = function ( bl_state, bl_link, bl_drop ) {
     return this;
 };
 
+function BLMeta_BLMeta() {}
+BLMeta_BLMeta.prototype.init = function (
+    bl_query, bl_tsen, bl_show ) {
+    
+    this.getBl_query = function () { return bl_query; };
+    this.getBl_tsen = function () { return bl_tsen; };
+    this.getBl_show = function () { return bl_show; };
+    return this;
+};
+
+var blMetaDefault =
+    new BLMeta_BLMeta( !"bl_query", !!"bl_tsen", "BLink" );
+
+function linkUpdate(
+    ins_Monad, ins_Signal, ins_HasClock, dt, luSend ) {
+    
+    var s = ins_Signal.ins_SigTime;
+    var a = s.ins_AffineSpace;
+    var dtf = s.ins_Ord.ins_Eq.eq(
+        dt, a.ins_AdditiveGroup.zeroV() ) ? id :
+        function ( t ) { return a.plusV( t, dt ); };
+    return function ( sig ) {
+        ins_Monad.bind( ins_HasClock.getTime(), function ( tNow ) {
+            var tm = dtf( tNow );
+            var su = ins_Signal.s_future( tm, sig );
+            var lu = new LinkUp_LinkUp().init(
+                new Maybe_Just().init( su ),
+                new Maybe_Just().init( tm ) );
+            return luSend( lu );
+        } );
+    };
+}
+
+// mkLinkRef :: (BLink v b u t, SigShadow s u t, SigShadow u s t)
+//           => String                    -- ^ debug string
+//           -> Diff t                    -- ^ extra history to keep
+//           -> v ((LinkUp t s x -> v ()) -- ^ to update the reference
+//                ,b (s ()) (s x)         -- ^ to share the reference
+//                )
+function mkLinkRef(
+    ins_BLink, ins_SigShadow_out, ins_SigShadow_in, sDebug, dtHist ) {
+    
+    var ignoreSub = kfn( ins_BLink.ins_HasVar.ins_Monad.ret( [] ) );
+    return mkLinkRefD( ins_BLink, ins_SigShadow_out, ins_SigShadow_in,
+        sDebug, ignoreSub, dtHist );
+}
+
+// mkLinkRefD :: (BLink v b u t, SigShadow s u t, SigShadow u s t)
+//            => String                 -- ^ debug string
+//            -> (Bool -> v ())         -- ^ event indicating interest
+//            -> Diff t                 -- ^ extra history to keep
+//            -> v ((LinkUp t s x -> v ())
+//                                      -- ^ to update the reference
+//                 ,b (s ()) (s x)      -- ^ to share the reference
+//                 )
+function mkLinkRefD( ins_BLink, ins_SigShadow_out, ins_SigShadow_in,
+    sDebug, onSub, dtHist ) {
+    
+    var v = ins_BLink.ins_HasVar;
+    var m = v.ins_Monad;
+    var a = ins_BLink.ins_Link.ins_BSig.ins_Signal.ins_SigTime.
+        ins_AffineSpace;
+    var fdt = s.ins_Ord.ins_Eq.eq(
+        dtHist, a.ins_AdditiveGroup.zeroV() ) ? id :
+        function ( t ) { return minusV( a, t, dtHist ); };
+    return m.bind( v.newVar( new Maybe_Nothing().init() ),
+        function ( vSig ) {
+    // PORT TODO: Figure out what values to actually put in here.
+    return m.bind( v.newVar( [ 1, {} ] ),
+        function ( vObs ) {
+    // PORT TODO: Implement lrefOnLU so it only takes four non-ins
+    // arguments.
+    // PORT TODO: Figure out which ins_Signal to pass here.
+    var onLU = lrefOnLU( ins_Signal_TODO, ins_Vat, ins_HasVar,
+        fdt, onSub, vSig, vObs );
+    // PORT TODO: Implement lrefOnBL so it only takes three non-ins
+    // arguments.
+    // PORT TODO: Figure out which ins_Signal to pass here.
+    var onBL = lrefOnBL( ins_Signal_TODO, ins_Vat, ins_HasVar,
+        onSub, vSig, vObs );
+    var blm =
+        new BLMeta_BLMeta().init( !!"bl_query", !!"bl_tsen", sDebug );
+    // PORT TODO: Figure out which ins_Signal to use here.
+    var st0 = [ 0,
+        [ ins_Signal_TODO.s_never(), new Maybe_Nothing().init() ] ];
+    return m.bind(
+        ins_BLink.mkBLink( ins_SigShadow_in, ins_SigShadow_out,
+            blm, st0, onBL ),
+        function ( bl ) {
+    return m.ret( [ onLU, bl ] );
+    } );
+    } );
+    } );
+}
+
 // TODO: Finish Link.lhs.
 
 
@@ -970,104 +1117,6 @@ BLRec_BLRec.prototype.init = function ( bl_state, bl_link, bl_drop ) {
 
 /*
 
--- | Some meta-data to support composable optimizations.
-data BLMeta = BLMeta
-    { bl_query :: Bool   -- | pure query; dead code if response dropped
-    , bl_tsen  :: Bool   -- | time-sensitive; don't shift across delay
-    , bl_show  :: String -- | indicator of purpose, for show or debug
-    }
-
-blMetaDefault :: BLMeta
-blMetaDefault = BLMeta 
-    { bl_query = False
-    , bl_tsen  = True 
-    , bl_show  = "BLink"
-    }
-
-
---------------------------------
--- Some convenience Operators --
---------------------------------
-
--- | simplified link-update. This uses the vat's time, plus an 
--- offset, to turn a provided signal into an update. The same
--- offset is used to determine stability. 
-linkUpdate :: (Monad v, Signal s (Time v), HasClock v)
-    => Diff (Time v)                   -- stability & time offset
-    -> ((LinkUp (Time v) s r) -> v ()) -- main update cap
-    -> s r -> v ()
-linkUpdate dt luSend = op
-  where dtf    = if (dt == zeroV) then id else (.+^ dt)  
-        op sig = 
-            getTime >>= \ tNow -> 
-            let tm = dtf tNow
-                su = s_future tm sig
-                lu = LinkUp { lu_update = Just su
-                            , lu_stable = Just tm  }
-            in luSend lu
-    
-
--- | A common pattern in reactive systems is to observe a variable
--- without influencing it. RDP favors demand driven behaviors, where
--- observation is a form of influence (i.e. whether the reference is
--- maintained or not), but can model simple reactive observation. In
--- order to support anticipation, an observable reference updates as
--- an RDP link. I call this a LinkRef.
---
--- A LinkRef must be active whenever there is at least one observer.
--- In most cases, developers will keep it active at all times after
--- construction, until application shutdown. When a resource will
--- always be observed, this won't hurt performance. If necessary,
--- developers can use a demand monitor to track observers precisely.
---
--- LinkRef must be regularly updated to clear histories and maintain
--- signal stability. Each LinkRef keeps a copy of its signal so far,
--- which it must mask per observer link (for duration coupling).
---
-mkLinkRef :: (BLink v b u t, SigShadow s u t, SigShadow u s t)
-          => String                    -- ^ debug string
-          -> Diff t                    -- ^ extra history to keep
-          -> v ((LinkUp t s x -> v ()) -- ^ to update the reference
-               ,b (s ()) (s x)         -- ^ to share the reference
-               )
-mkLinkRef sDebug = mkLinkRefD sDebug ignoreSub
-    where ignoreSub = const $ return ()
-
--- | mkLinkRefD offers developers a very coarse estimate of demand,
--- basically whether there are any subscribers or not, as a callback
--- event. This is imprecise, since it will report a subscriber even
--- when the subscriber does not currently need the response. Use of
--- a demand monitor is STRONGLY recommended if trying to optimize an
--- expensive resource, like network.
---
--- But in many cases this estimate is sufficient and convenient, and
--- the overhead of an extra demand monitor and signal analysis might
--- be difficult to justify. Use the event to start or stop polling
--- loops for mouse input, for example.
---
--- The event is simple: Bool -> Action, with the Bool indicating if
--- there is at least one subscriber.
---
--- Otherwise, mkLinkRefD behaves the same as mkLinkRef.
---
-mkLinkRefD :: (BLink v b u t, SigShadow s u t, SigShadow u s t)
-           => String                    -- ^ debug string
-           -> (Bool -> v ())            -- ^ event indicating interest
-           -> Diff t                    -- ^ extra history to keep
-           -> v ((LinkUp t s x -> v ()) -- ^ to update the reference
-                ,b (s ()) (s x)         -- ^ to share the reference
-                )
-mkLinkRefD sDebug onSub dtHist =
-    newVar Nothing     >>= \ vSig ->
-    newVar (1,M.empty) >>= \ vObs ->
-    let onLU = lrefOnLU fdt onSub vSig vObs 
-        onBL = lrefOnBL onSub vSig vObs
-        blm  = BLMeta { bl_query = True, bl_tsen = True, bl_show = sDebug }
-        st0  = (0,(s_never,Nothing)) 
-    in
-    mkBLink blm st0 onBL >>= \ bl ->
-    return (onLU, bl)
-    where fdt = if (dtHist == zeroV) then id else (.-^ dtHist)
 
 -- SUMMARY OF LINKREF STATE:
 --   vSig - Maybe (s x, Maybe t)
