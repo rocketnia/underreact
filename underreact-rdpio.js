@@ -347,7 +347,7 @@ var class_Ord = makeClass( {
     // (>=)
     gte: function ( x, y ) { return this.compare( x, y ) !== "lt"; },
     max: function ( x, y ) { return this.lte( x, y ) ? y : x; },
-    min: function ( x, y ) { return this.lte( x, y ) ? x : y; },
+    min: function ( x, y ) { return this.lte( x, y ) ? x : y; }
 } );
 
 var ins_jsNum_Eq = makeInstance( class_Eq, {
