@@ -101,6 +101,7 @@
 // and accessors instead.
 // PORT NOTE: We use Arrays for all tuples, even ().
 // PORT NOTE: We represent Boolean with JavaScript booleans. Surprise!
+// PORT NOTE: We represent Ordering with "lt", "eq", and "gt".
 // PORT NOTE: We represent IO with asynchronous JavaScript procedures.
 // Specifically, they're procedures that can be told to give up
 // instead of doing anything asynchronous, so we should sometimes be
@@ -238,6 +239,13 @@ Maybe_Just.prototype.init = function ( just ) {
     return this;
 };
 
+function maybe( onNothing, onJust ) {
+    return function ( maybe ) {
+        return maybe instanceof Maybe_Nothing ?
+            onNothing : onJust( maybe.just );
+    };
+}
+
 var class_Functor = makeClass( {
     fmap: null
     // PORT TODO: Should we include (<$)?
@@ -326,10 +334,20 @@ var class_Eq = makeClass( {
 
 var class_Ord = makeClass( {
     ins_Eq: null,
+    compare: function ( x, y ) {
+        return this.ins_Eq.eq( x, y ) ? "eq" :
+            this.lte( x, y ) ? "lt" : "gt";
+    },
     // (<)
-    lt: null
-    // PORT TODO: Should we include Haskell's other Ord operations in
-    // here as well?
+    lt: function ( x, y ) { return this.compare( x, y ) === "lt"; },
+    // (<=)
+    lte: function ( x, y ) { return this.compare( x, y ) !== "gt"; },
+    // (>)
+    gt: function ( x, y ) { return this.compare( x, y ) === "gt"; },
+    // (>=)
+    gte: function ( x, y ) { return this.compare( x, y ) !== "lt"; },
+    max: function ( x, y ) { return this.lte( x, y ) ? y : x; },
+    min: function ( x, y ) { return this.lte( x, y ) ? x : y; },
 } );
 
 var ins_jsNum_Eq = makeInstance( class_Eq, {
@@ -1068,32 +1086,30 @@ function mkLinkRefD( ins_BLink, ins_SigShadow_out, ins_SigShadow_in,
     sDebug, onSub, dtHist ) {
     
     var v = ins_BLink.ins_HasVar;
+    var ins_Vat = ins_BLink.ins_Link.ins_Vat;
     var m = v.ins_Monad;
     var a = ins_BLink.ins_Link.ins_BSig.ins_Signal.ins_SigTime.
         ins_AffineSpace;
+    // PORT NOTE: This is the instance "Signal s" corresponding to s
+    // in the above type signature. We can also get the "Signal u"
+    // instance, but we don't use that for anything; the SigShadows
+    // are just there to communicate with the "Vat v".
+    var s = ins_SigShadow_out.ins_Signal_of;
+    
     var fdt = s.ins_Ord.ins_Eq.eq(
         dtHist, a.ins_AdditiveGroup.zeroV() ) ? id :
         function ( t ) { return minusV( a, t, dtHist ); };
     return m.bind( v.newVar( new Maybe_Nothing().init() ),
         function ( vSig ) {
-    // PORT TODO: Figure out what values to actually put in here.
-    return m.bind( v.newVar( [ 1, {} ] ),
-        function ( vObs ) {
+    // PORT TODO: Figure out if 1 and {} are appropriate values here.
+    return m.bind( v.newVar( [ 1, {} ] ), function ( vObs ) {
     // PORT TODO: Implement lrefOnLU so it only takes four non-ins
     // arguments.
-    // PORT TODO: Figure out which ins_Signal to pass here.
-    var onLU = lrefOnLU( ins_Signal_TODO, ins_Vat, ins_HasVar,
-        fdt, onSub, vSig, vObs );
-    // PORT TODO: Implement lrefOnBL so it only takes three non-ins
-    // arguments.
-    // PORT TODO: Figure out which ins_Signal to pass here.
-    var onBL = lrefOnBL( ins_Signal_TODO, ins_Vat, ins_HasVar,
-        onSub, vSig, vObs );
+    var onLU = lrefOnLU( s, ins_Vat, v, fdt, onSub, vSig, vObs );
+    var onBL = lrefOnBL( s, ins_Vat, v, onSub, vSig, vObs );
     var blm =
         new BLMeta_BLMeta().init( !!"bl_query", !!"bl_tsen", sDebug );
-    // PORT TODO: Figure out which ins_Signal to use here.
-    var st0 = [ 0,
-        [ ins_Signal_TODO.s_never(), new Maybe_Nothing().init() ] ];
+    var st0 = [ 0, [ s.s_never(), new Maybe_Nothing().init() ] ];
     return m.bind(
         ins_BLink.mkBLink( ins_SigShadow_in, ins_SigShadow_out,
             blm, st0, onBL ),
@@ -1102,6 +1118,51 @@ function mkLinkRefD( ins_BLink, ins_SigShadow_out, ins_SigShadow_in,
     } );
     } );
     } );
+}
+
+function lrefOnBL(
+    ins_Signal, ins_Vat, ins_HasVar, onSub, vSig, vObs ) {
+    
+    return function ( blr, lu ) {
+        var h = ins_HasVar;
+        var m = h.ins_Monad;
+        return m.bind( h.readVar( blr.getBl_state() ),
+            function ( ixAndS0And_ ) {
+        var ix = ixAndS0And_[ 0 ], s0 = ixAndS0And_[ 1 ][ 0 ];
+        return m.bind( h.readVar( vSig ), function ( ls ) {
+        var sf = maybe( s0, ins_Signal.su_apply( s0 ) )(
+            lu.getLu_update() );
+        var tf = lu.getLu_stable();
+        if ( ls instanceof Maybe_Nothing )
+            return m.then(
+                h.writeVar( blr.getBl_state(), [ ix, [ sf, tf ] ] ),
+                lrefSubscribe( ins_Signal, ins_Vat, h,
+                    onSub, vObs, blr ) );
+        var slAndTl = ls.just;
+        var sl = slAndTl[ 0 ], tl = slAndTl[ 1 ];
+        var tx = tmin( ins_Signal.ins_SigTime.ins_Ord, tl, tf );
+        var sfc = maybe( ins_Signal.s_never(), function ( tx ) {
+            return ins_Signal.s_sample( sf, tx )[ 1 ];
+        } )( tx );
+        var bdone = maybe( true, function ( tx ) {
+            return s_term( ins_Signal, sfc, tx );
+        } )( tx );
+        var autoSubscribe = bdone ? lrefUnsubscribe : lrefSubscribe;
+        var lsm = ins_Signal.s_mask( sl, sf );
+        var tu = lu_time( ins_Signal, lu );
+        var slu = ins_Maybe_Functor.fmap( function ( tu ) {
+            return ins_Signal.s_future( tu, slm );
+        } )( tu );
+        var lux = new LinkUp_LinkUp().init( slu, tx );
+        return m.then(
+            h.writeVar( bir.getBl_state(), [ ix, [ sfc, tf ] ] ),
+            m.then(
+                autoSubscribe(
+                    ins_Signal, ins_Vat, h, onSub, vObs, blr ),
+                blr.getBl_link()( lux ) ) );
+        } );
+        } );
+    };
 }
 
 // TODO: Finish Link.lhs.
@@ -1116,71 +1177,6 @@ function mkLinkRefD( ins_BLink, ins_SigShadow_out, ins_SigShadow_in,
 
 
 /*
-
-
--- SUMMARY OF LINKREF STATE:
---   vSig - Maybe (s x, Maybe t)
---     Nothing      - initial state only; awaiting first update
---     Just (sl,tl) - current state-signal and stability
---   vObs - (Integer, Map: Integer -> BLRec)
---     First integer is to label new subscribers.
---     Map simply stores subscribers.
---   BLRec - (Integer, (s (), Maybe t))
---     Integer identifies subscripion, or 0 for not subscribed.
---     With demand signal and last reported stability.
---
--- NOTES:
--- * It is important that subscribers update based on the pre-cut
---   state of the signal, after each signal update. This ensures
---   that 'lossiness' only occurs to new subscribers.
--- * In general, a subscriber will process an update immediately
---   after updating the subscription. (The exception is if the
---   LinkRef is still uninitialized.)
--- * Subscribe whenever we might be interested in future updates.
--- * Use s_term to decide when to unsubscribe.
-type LRSigSt    t s x   = Maybe (s x, Maybe t)
-type LRObsSt  v t s x   = (Integer, LRObsMap v t s x)
-type LRBLSt     t s     = (Integer, (s (), Maybe t))
-type LRBLRec  v t s x   = BLRec t v (LRBLSt t s) s x 
-type LRObsMap v t s x   = M.Map Integer (LRBLRec v t s x)
-
--- receives a subscriber update.
-lrefOnBL :: (Signal s t, Vat v, HasVar v)
-    => (Bool -> v ())
-    -> Var v (LRSigSt t s x)
-    -> Var v (LRObsSt v t s x)
-    -> LRBLRec v t s x
-    -> LinkUp t s () 
-    -> v ()
-lrefOnBL onSub vSig vObs blr lu = 
-    readVar (bl_state blr) >>= \ (ix,(s0,_)) ->
-    readVar vSig >>= \ ls ->
-    let sf = maybe s0 (su_apply s0) (lu_update lu)
-        tf = lu_stable lu
-    in
-    case ls of
-      Nothing ->
-        -- uninitialized source. Do not cut the initial 
-        -- history; wait for first update to LinkRef.
-        sf `seq` writeVar (bl_state blr) (ix,(sf,tf)) >>
-        lrefSubscribe onSub vObs blr
-      Just (sl,tl) ->
-        -- cut the demand history immediately, just as with a source
-        -- update. Decide whether to subscribe or unsubscribe. Send
-        -- an update based on sl and the new demand.
-        let tx   = tmin tl tf 
-            sfc  = maybe s_never (snd . s_sample sf) tx
-            bdone = maybe True (s_term sfc) tx
-            autoSubscribe = if bdone then lrefUnsubscribe else lrefSubscribe
-            slm  = s_mask sl sf
-            tu   = lu_time lu
-            slu  = fmap (flip s_future slm) tu 
-            lux  = LinkUp { lu_update = slu, lu_stable = tx }
-        in
-        -- update the BLRec state, and maybe subscribe.
-        sfc `seq` writeVar (bl_state blr) (ix,(sfc,tf)) >>
-        autoSubscribe onSub vObs blr >>
-        bl_link blr lux
 
 lrefOnLU :: (Signal s t, Vat v, HasVar v)
     => (t -> t)
@@ -1243,13 +1239,11 @@ lrefUnsubscribe onSub vObs blr =
         m' `seq` writeVar vObs (iNxt,m') >>
         when (M.null m') (eventually $ onSub False)
 
-tmin :: (Ord t) => Maybe t -> Maybe t -> Maybe t
-tmin Nothing y = y
-tmin x Nothing = x
-tmin (Just x) (Just y) = Just (min x y)
-
-
-\end{code}
-
 
 */
+
+function tmin( ins_Ord, x, y ) {
+    if ( x instanceof Maybe_Nothing ) return y;
+    if ( y instanceof Maybe_Nothing ) return x;
+    return new Maybe_Just().init( ins_Ord.min( x.just, y.just ) );
+}
