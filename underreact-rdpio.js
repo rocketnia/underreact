@@ -110,19 +110,6 @@
 // JavaScript number of milliseconds. Specifically, getCurrentTime
 // is implemented as "new Date().getTime()".
 
-// PORT TODO: Implement the following core Haskell functionality (or
-// library functionality, as the case may be):
-//
-// (Actually, there's nothing more to implement at the moment.)
-
-// PORT TODO: Implement the following dependencies of RDPIO.lhs:
-//
-// Link.lhs
-// RDPIO/*.lhs
-// RDPIO.lhs itself
-//
-// PORT TODO: Figure out what to do next.
-
 // PORT NOTE: We're only using the following JavaScript free/global
 // variables:
 //
@@ -182,6 +169,9 @@ function kfn( result ) {
         return result;
     };
 }
+
+function fst( pair ) { return pair[ 0 ]; }
+function snd( pair ) { return pair[ 1 ]; }
 
 function Chan() {}
 Chan.prototype.init = function () {
@@ -405,6 +395,8 @@ var class_Signal = makeClass( {
     su_drop: null,
     s_delay: null,
     su_delay: null,
+    // PORT TODO: Make sure to implement su_apply curried, with one
+    // parameter leading into one other.
     su_apply: null,
     su_time: null,
     s_future: null,
@@ -1142,7 +1134,7 @@ function lrefOnBL(
         var sl = slAndTl[ 0 ], tl = slAndTl[ 1 ];
         var tx = tmin( ins_Signal.ins_SigTime.ins_Ord, tl, tf );
         var sfc = maybe( ins_Signal.s_never(), function ( tx ) {
-            return ins_Signal.s_sample( sf, tx )[ 1 ];
+            return snd( ins_Signal.s_sample( sf, tx ) );
         } )( tx );
         var bdone = maybe( true, function ( tx ) {
             return s_term( ins_Signal, sfc, tx );
@@ -1155,7 +1147,7 @@ function lrefOnBL(
         } )( tu );
         var lux = new LinkUp_LinkUp().init( slu, tx );
         return m.then(
-            h.writeVar( bir.getBl_state(), [ ix, [ sfc, tf ] ] ),
+            h.writeVar( blr.getBl_state(), [ ix, [ sfc, tf ] ] ),
             m.then(
                 autoSubscribe(
                     ins_Signal, ins_Vat, h, onSub, vObs, blr ),
@@ -1165,85 +1157,579 @@ function lrefOnBL(
     };
 }
 
-// TODO: Finish Link.lhs.
-
-
-
-
-
-
-
-
-
-
-/*
-
-lrefOnLU :: (Signal s t, Vat v, HasVar v)
-    => (t -> t)
-    -> (Bool -> v ())
-    -> Var v (LRSigSt t s x)
-    -> Var v (LRObsSt v t s x)
-    -> LinkUp t s x
-    -> v ()
-lrefOnLU cutHist onSub vSig vObs lu =
-    -- first update the link's signal history to support future
-    -- subscribers.
-    readVar vSig >>= \ ls ->
-    let tl  = lu_stable lu 
-        sl0 = maybe s_never fst ls
-        sl  = maybe sl0 (su_apply sl0) (lu_update lu)
-        slc = maybe sl (snd . s_sample sl . cutHist) tl
-    in 
-    slc `seq` writeVar vSig (Just (slc,tl)) >>
-
-    -- second, process each subscriber, and possibly unsubscribe.
-    readVar vObs >>= \ (_,omap) ->
-    forM_ (M.elems omap) $ \ blr ->
-        readVar (bl_state blr) >>= \ (ix,(sd,td)) ->
-        let tx    = tmin tl td
-            sdc   = maybe s_never (snd . s_sample sd) tx
-            bdone = maybe True (s_term sdc) tx 
-            slm   = s_mask sl sd
-            tu    = lu_time lu
-            slu   = fmap (flip s_future slm) tu
-            lux   = LinkUp { lu_update = slu, lu_stable = tx }
-         in 
-         sdc `seq` writeVar (bl_state blr) (ix,(sdc,td)) >>
-         when bdone (lrefUnsubscribe onSub vObs blr) >>
-         bl_link blr lux
+function lrefOnLU(
+    ins_Signal, ins_Vat, ins_HasVar, cutHist, onSub, vSig, vObs ) {
     
+    return function ( lu ) {
+        var h = ins_HasVar;
+        var m = ins_Vat.ins_Monad;
+        return m.bind( h.readVar( vSig ), function ( ls ) {
+        var tl = lu.getLu_stable();
+        var sl0 = maybe( ins_Signal.s_never(), fst )( ls );
+        var sl = maybe( sl0, ins_Signal.su_apply( sl0 ) )(
+            lu.getLu_update() );
+        var sfc = maybe( ls, function ( tl ) {
+            return snd( ins_Signal.s_sample( sl, cutHist( tl ) ) );
+        } )( tl );
+        return m.then(
+            h.writeVar( vSig, new Maybe_Just().init( [ slc, tl ] ) ),
+            m.bind( h.readVar( vObs ), function ( _AndOmap ) {
+            var omap = _AndOmap[ 1 ];
+            // PORT TODO: Implement forM_ as forMDrop, and make sure
+            // we're passing the right monad instance here.
+            // PORT TODO: Implement M.elems as dictElems.
+            return forMDrop( m, dictElems( omap ), function ( blr ) {
+                return m.bind( h.readVar( blr.getBl_state ),
+                    function ( ixAndSdAndTd ) {
+                var ix = ixAndSdAndTd[ 0 ];
+                var sd = ixAndSdAndTd[ 1 ][ 0 ];
+                var td = ixAndSdAndTd[ 1 ][ 1 ];
+                var tx = tmin(
+                    ins_Signal.ins_SigTime.ins_Ord, tl, td );
+                var sdc = maybe( ins_Signal.s_never(),
+                    function ( tx ) {
+                    
+                    return snd( ins_Signal.s_sample( sd, tx ) );
+                } )( tx );
+                var bdone = maybe( true, function ( tx ) {
+                    return s_term( ins_Signal, sdc, tx );
+                } )( tx );
+                var slm = ins_Signal.s_mask( sl, sd );
+                var tu = lu_time( ins_Signal, lu );
+                var slu = ins_Maybe_Functor.fmap( function ( tu ) {
+                    return ins_Signal.s_future( tu, slm );
+                } )( tu );
+                var lux = new LinkUp_LinkUp().init( slu, tx );
+                return m.then(
+                    h.writeVar(
+                        blr.getBl_state(), [ ix, [ sdc, td ] ] ),
+                    m.then(
+                        when( m, bdone,
+                            lrefUnsubscribe( ins_Signal, ins_Vat, h,
+                                onSub, vObs, blr ) ),
+                        blr.getBl_link()( lux ) ) );
+                } );
+            } );
+            } ) );
+        } );
+    };
+}
+
+function lrefSubscribe(
+    ins_Signal, ins_Vat, ins_HasVar, onSub, vObs, blr ) {
     
-lrefSubscribe,lrefUnsubscribe 
-    :: (Signal s t, Vat v, HasVar v)
-    => (Bool -> v ())
-    -> Var v (LRObsSt v t s x)
-    -> LRBLRec v t s x
-    -> v ()
-lrefSubscribe onSub vObs blr =
-    readVar (bl_state blr) >>= \ (ix,sig) ->
-    when (ix == 0) $
-        readVar vObs >>= \ (iNxt,m) ->
-        writeVar (bl_state blr) (iNxt,sig) >>
-        let m'    = M.insert iNxt blr m 
-            iNxt' = succ iNxt  
-        in
-        m' `seq` writeVar vObs (iNxt', m') >>
-        when (M.null m) (eventually $ onSub True)
+    var h = ins_HasVar;
+    var m = ins_Vat.ins_Monad;
+    return m.bind( v.readVar( blr.getBl_state() ),
+        function ( ixAndSig ) {
+        
+        var ix = ixAndSig[ 0 ], sig = ixAndSig[ 1 ];
+        // PORT TODO: See if there's a better value to put here than
+        // 0.
+        return when( m,
+            ins_Signal.ins_SigTime.ins_Ord.ins_Eq.eq( ix, 0 ),
+            m.bind( v.readVar( vObs ), function ( iNxtAndM ) {
+                var iNxt = iNxtAndM[ 0 ], m = iNxtAndM[ 1 ];
+                // PORT TODO: Implement M.insert as dictInsert.
+                var mPrime = dictInsert( iNxt, blr, m );
+                // PORT TODO: See if we should implement succ.
+                var iNxtPrime = 1 + iNxt;
+                return m.then(
+                    v.writeVar( blr.getBl_state(), [ iNxt, sig ] ),
+                    m.then( v.writeVar( vObs, [ iNxtPrime, mPrime ] ),
+                        // PORT TODO: Implement M.null as dictNull.
+                        when( m, dictNull( m ),
+                            ins_Vat.eventually( onSub( true ) )
+                        ) ) );
+             } ) );
+    } );
+}
 
-lrefUnsubscribe onSub vObs blr =
-    readVar (bl_state blr) >>= \ (ix,sig) ->
-    when (ix /= 0) $
-        writeVar (bl_state blr) (0,sig) >>
-        readVar vObs >>= \ (iNxt,m) ->
-        let m' = M.delete ix m in
-        m' `seq` writeVar vObs (iNxt,m') >>
-        when (M.null m') (eventually $ onSub False)
-
-
-*/
+function lrefUnsubscribe(
+    ins_Signal, ins_Vat, ins_HasVar, onSub, vObs, blr ) {
+    
+    var h = ins_HasVar;
+    var m = ins_Vat.ins_Monad;
+    return m.bind( v.readVar( blr.getBl_state() ),
+        function ( ixAndSig ) {
+        
+        var ix = ixAndSig[ 0 ], sig = ixAndSig[ 1 ];
+        // PORT TODO: See if there's any point to implementing (/=).
+        // PORT TODO: See if there's a better value to put here than
+        // 0.
+        return when( m,
+            !ins_Signal.ins_SigTime.ins_Ord.ins_Eq.eq( ix, 0 ),
+            m.then( v.writeVar( blr.getBl_state(), [ 0, sig ] ),
+                m.bind( v.readVar( vObs ), function ( iNxtAndM ) {
+                    var iNxt = iNxtAndM[ 0 ], m = iNxtAndM[ 1 ];
+                    // PORT TODO: Implement M.delete as dictDelete.
+                    var mPrime = dictDelete( ix, m );
+                    return m.then(
+                        v.writeVar( vObs, [ iNxt, mPrime ] ),
+                        // PORT TODO: Implement M.null as dictNull.
+                        when( m, dictNull( mPrime ),
+                            ins_Vat.eventually( onSub( false ) )
+                        ) );
+                } ) ) );
+    } );
+}
 
 function tmin( ins_Ord, x, y ) {
     if ( x instanceof Maybe_Nothing ) return y;
     if ( y instanceof Maybe_Nothing ) return x;
     return new Maybe_Just().init( ins_Ord.min( x.just, y.just ) );
 }
+
+
+
+// TODO: Port RDPIO/Queue.lhs, below.
+/*
+
+-- the choice of RDPIO's task queue...
+--  a rather thin indirection to Data.Sequence, for now.
+module RDP.RDPIO.Queue 
+    ( Queue
+    , nullQ
+    , emptyQ
+    , runQ
+    , pushQ
+    , singleQ 
+    ) where
+
+import qualified Data.Sequence as S
+import qualified Data.Foldable as F
+
+newtype Queue a = Q (S.Seq a)
+
+nullQ :: Queue a -> Bool
+nullQ (Q q) = S.null q
+
+emptyQ :: Queue a
+emptyQ = Q S.empty
+
+runQ :: (Monad m) => Queue (m ()) -> m ()
+runQ (Q q) = F.sequence_ q
+
+pushQ :: a -> Queue a -> Queue a
+pushQ op (Q q) = Q (q S.|> op)
+
+singleQ :: a -> Queue a
+singleQ = Q . S.singleton
+
+*/
+
+// TODO: Port RDPIO/CSched.lhs, below.
+/*
+
+module RDP.RDPIO.CSched 
+    ( CSched(..)
+    ) where
+
+-- | Clocked Scheduler (as a set of capabilities)
+--
+-- A clock has a set of registrations: time never advances past the
+-- earliest registered instant.
+--
+-- A clock also has a set of scheduled events to run at certain
+-- times in the future. These events run in an unspecified thread,
+-- and may be constrained in type.
+data CSched m time uid event = CSched
+    { cs_time    :: m time         -- logical time for scheduler
+    , cs_time_x  :: uid -> m time  -- maximum bound time for vat
+
+    -- Schedule an event to be executed during or after given time
+    -- is logically available (according to cs_time)
+    , cs_schedule :: event -> time -> m ()
+
+    -- atomically register a new vat based on current time. Takes a 
+    -- function to choose a registration time based on current time. 
+    -- returns (tNow,tReg); tReg is given function of tNow.
+    , cs_reg_new :: uid -> (time -> time) -> m (time,time) 
+
+    -- add a registration to the clock. The caller, in this case,
+    -- must already be registered for an earlier time. This is 
+    -- usually used for registering a different vat.
+    , cs_reg_add :: uid -> time -> m ()
+
+    -- update an existing registry while removing an old one.
+    -- requires monotonic time, i.e. that the upd is greater than 
+    -- at least one of the cleared times (might assert in debug).
+    , cs_reg_upd :: uid -> time -> [time] -> m ()
+
+    -- clear the registry of a set of registered blocks.
+    , cs_reg_clr :: uid -> [time] -> m ()
+    }
+
+*/
+
+// TODO: Port RDPIO/Ref.lhs, below.
+/*
+
+module RDP.RDPIO.Ref
+    ( Ref
+    , newRef
+    , readRef
+    , writeRef
+    , modifyRef  -- 
+    , modifyRef' -- strictly modify a reference
+    ) where
+
+import Data.IORef
+
+newtype Ref a = Ref (IORef a)   -- a shared-memory reference
+
+newRef :: a -> IO (Ref a)
+readRef :: (Ref a) -> IO a
+writeRef :: (Ref a) -> a -> IO ()
+modifyRef, modifyRef' :: (Ref a) -> (a -> (a,b)) -> IO b
+-- note: modifyRef' will evaluate the update before returning.
+
+
+newRef s0 = newIORef s0 >>= return . Ref
+readRef (Ref r) = readIORef r
+writeRef (Ref r) = writeIORef r
+modifyRef (Ref r) = atomicModifyIORef r
+modifyRef' (Ref r) f = 
+    atomicModifyIORef r (dupfst . f) >>= \ (x,y) ->
+    x `seq` return y
+    where dupfst (x,y) = (x,(x,y))
+
+*/
+
+
+/*
+
+TODO: Port the following files:
+
+RDPIO/CSchedIO.lhs
+BehADT.lhs (Behavior)
+RDPIO/Time.lhs
+RDPIO/Host.lhs
+RDPIO/State.lhs
+RDPIO/Loop.lhs
+RDPIO/Run.lhs
+Unique.lhs
+RDPIO/Vat.lhs (header says VatMain)
+RDPIO/VatCB.lhs
+RDPIO/VatVar.lhs
+RDPIO/LinkBase.lhs
+RDPIO/Link.lhs
+RDPIO/RDBehavior.lhs
+RDPIO/RDBehaviorDyn.lhs
+RDPIO/RDLink.lhs
+RDPIO.lhs
+DiscreteTimedSeq.lhs (header says DiscreteTimedSignal)
+SigDSeq.lhs
+SigD.lhs
+SigC.lhs
+Agent.lhs (RDAgent)
+BError.lhs
+BState.lhs (Trans.StateBehavior)
+BWriter.lhs (Trans.BWriter)
+BReader.lhs
+
+
+
+For future reference, here are the notes used to get this list:
+
+
+Files sorted by name:
+
+RDPIO/CSched.lhs
+RDPIO/CSchedIO.lhs
+  RDPIO.CSched
+  RDPIO.Ref
+RDPIO/Host.lhs
+  RDPIO.Time
+  RDPIO.CSched
+  RDPIO.CSchedIO
+  RDPIO.Ref
+RDPIO/Link.lhs
+  RDSignal
+  Behavior (meaning BehADT.lhs)
+  RDLink
+  RDPIO.State
+  RDPIO.LinkBase
+  RDPIO.Vat
+  RDPIO.VatVar
+RDPIO/LinkBase.lhs
+  RDPIO.State
+  RDLink
+  RDSignal
+  Behavior (meaning BehADT.lhs)
+RDPIO/Loop.lhs
+  Clock
+  RDPIO.Ref
+  RDPIO.Queue
+  RDPIO.CSched
+  RDPIO.Host
+  RDPIO.State
+RDPIO/Queue.lhs
+RDPIO/RDBehavior.lhs
+  RDSignal
+  RDBehavior (meaning Behavior.lhs)
+  Behavior (meaning BehADT.lhs)
+  RDPIO.State
+  RDPIO.LinkBase
+RDPIO/RDBehaviorDyn.lhs
+  RDSignal
+  RDBehavior (meaning BehADT.lhs)
+  RDPIO.RDBehavior
+RDPIO/RDLink.lhs
+  RDLink
+  RDSignal
+  RDBehavior (meaning Behavior.lhs)
+  Behavior (meaning BehADT.lhs)
+  RDPIO.State
+  RDPIO.Vat
+  RDPIO.VatVar
+  RDPIO.LinkBase
+  RDPIO.Link
+  RDPIO.RDBehavior
+RDPIO/Ref.lhs
+RDPIO/Run.lhs
+  Clock
+  RDPIO.State
+  RDPIO.Ref
+  RDPIO.Queue
+  RDPIO.Host
+  RDPIO.CSched
+  RDPIO.Loop
+RDPIO/State.lhs
+  RDPIO.Host
+  RDPIO.CSched
+  RDPIO.Ref
+  RDPIO.Queue
+RDPIO/Time.lhs
+  RDSignal
+  Clock
+RDPIO/Vat.lhs (header says VatMain)
+  Vat
+  Unique
+  Clock
+  RDPIO.Run
+  RDPIO.Queue
+  RDPIO.State
+  RDPIO.Host
+RDPIO/VatCB.lhs
+  VatCB
+  RDPIO.Vat
+  RDPIO.Queue
+  RDPIO.Ref
+  RDPIO.State
+RDPIO/VatVar.lhs
+  Var
+  RDPIO.Host
+  RDPIO.State
+Agent.lhs (RDAgent)
+  RDSignal
+  RDBehavior (but seems not to use it)
+  RDLink (but seems not to use it)
+BehADT.lhs (Behavior)
+  RDSignal
+  RDBehavior (meaning Behavior.lhs)
+Behavior.lhs (header says RDBehavior)
+  Signal
+BError.lhs
+BReader.lhs
+  (implicitly depends on Behavior.lhs)
+BState.lhs (Trans.StateBehavior)
+BWriter.lhs (Trans.BWriter)
+Clock.lhs
+  RDSignal
+DiscreteTimedSeq.lhs (header says DiscreteTimedSignal)
+Link.lhs (header says RDLink)
+  Vat
+  Var
+  Clock
+  RDSignal
+  RDBehavior (meaning Behavior.lhs)
+RDPIO.lhs
+  RDPIO.State
+  RDPIO.Run
+  RDPIO.Vat
+  RDPIO.VatVar
+  RDPIO.VatCB
+  RDPIO.RDLink
+  RDPIO.RDBehavior
+  RDPIO.RDBehaviorDyn
+  RDPIO.Time
+  Vat
+  Var
+  VatCB
+  Clock
+  RDLink
+  RDSignal
+  RDBehavior (but seems not to use it)
+SigC.lhs
+  SigDSeq
+  DiscreteTimedSeq
+  SigD
+  RDSignal
+SigD.lhs
+  SigDSeq
+  DiscreteTimedSeq
+  RDSignal
+SigDSeq.lhs
+  DiscreteTimedSeq
+Signal.lhs (header says RDSignal)
+Unique.lhs
+Var.lhs
+Vat.lhs
+  Clock
+  Var
+VatCB.lhs
+  Vat
+
+
+
+Files organized so they have no forward references:
+
+Signal.lhs (header says RDSignal)
+Clock.lhs
+  RDSignal
+Var.lhs
+Vat.lhs
+  Clock
+  Var
+Behavior.lhs (header says RDBehavior)
+  Signal
+VatCB.lhs
+  Vat
+Link.lhs (header says RDLink)
+  Vat
+  Var
+  Clock
+  RDSignal
+  RDBehavior (meaning Behavior.lhs)
+RDPIO/Queue.lhs
+RDPIO/CSched.lhs
+RDPIO/Ref.lhs
+RDPIO/CSchedIO.lhs
+  RDPIO.CSched
+  RDPIO.Ref
+BehADT.lhs (Behavior)
+  RDSignal
+  RDBehavior (meaning Behavior.lhs)
+RDPIO/Time.lhs
+  RDSignal
+  Clock
+RDPIO/Host.lhs
+  RDPIO.Time
+  RDPIO.CSched
+  RDPIO.CSchedIO
+  RDPIO.Ref
+RDPIO/State.lhs
+  RDPIO.Host
+  RDPIO.CSched
+  RDPIO.Ref
+  RDPIO.Queue
+RDPIO/Loop.lhs
+  Clock
+  RDPIO.Ref
+  RDPIO.Queue
+  RDPIO.CSched
+  RDPIO.Host
+  RDPIO.State
+RDPIO/Run.lhs
+  Clock
+  RDPIO.State
+  RDPIO.Ref
+  RDPIO.Queue
+  RDPIO.Host
+  RDPIO.CSched
+  RDPIO.Loop
+Unique.lhs
+RDPIO/Vat.lhs (header says VatMain)
+  Vat
+  Unique
+  Clock
+  RDPIO.Run
+  RDPIO.Queue
+  RDPIO.State
+  RDPIO.Host
+RDPIO/VatCB.lhs
+  VatCB
+  RDPIO.Vat
+  RDPIO.Queue
+  RDPIO.Ref
+  RDPIO.State
+RDPIO/VatVar.lhs
+  Var
+  RDPIO.Host
+  RDPIO.State
+RDPIO/LinkBase.lhs
+  RDPIO.State
+  RDLink
+  RDSignal
+  Behavior (meaning BehADT.lhs)
+RDPIO/Link.lhs
+  RDSignal
+  Behavior (meaning BehADT.lhs)
+  RDLink
+  RDPIO.State
+  RDPIO.LinkBase
+  RDPIO.Vat
+  RDPIO.VatVar
+RDPIO/RDBehavior.lhs
+  RDSignal
+  RDBehavior (meaning Behavior.lhs)
+  Behavior (meaning BehADT.lhs)
+  RDPIO.State
+  RDPIO.LinkBase
+RDPIO/RDBehaviorDyn.lhs
+  RDSignal
+  RDBehavior (meaning BehADT.lhs)
+  RDPIO.RDBehavior
+RDPIO/RDLink.lhs
+  RDLink
+  RDSignal
+  RDBehavior (meaning Behavior.lhs)
+  Behavior (meaning BehADT.lhs)
+  RDPIO.State
+  RDPIO.Vat
+  RDPIO.VatVar
+  RDPIO.LinkBase
+  RDPIO.Link
+  RDPIO.RDBehavior
+RDPIO.lhs
+  RDPIO.State
+  RDPIO.Run
+  RDPIO.Vat
+  RDPIO.VatVar
+  RDPIO.VatCB
+  RDPIO.RDLink
+  RDPIO.RDBehavior
+  RDPIO.RDBehaviorDyn
+  RDPIO.Time
+  Vat
+  Var
+  VatCB
+  Clock
+  RDLink
+  RDSignal
+  RDBehavior (but seems not to use it)
+DiscreteTimedSeq.lhs (header says DiscreteTimedSignal)
+SigDSeq.lhs
+  DiscreteTimedSeq
+SigD.lhs
+  SigDSeq
+  DiscreteTimedSeq
+  RDSignal
+SigC.lhs
+  SigDSeq
+  DiscreteTimedSeq
+  SigD
+  RDSignal
+Agent.lhs (RDAgent)
+  RDSignal
+  RDBehavior (but seems not to use it)
+  RDLink (but seems not to use it)
+BError.lhs
+BState.lhs (Trans.StateBehavior)
+BWriter.lhs (Trans.BWriter)
+BReader.lhs
+  (implicitly depends on Behavior.lhs)
+
+
+*/
