@@ -484,12 +484,6 @@ var ins_bigint_Enum = makeInstance( class_Enum, {
     }
 } );
 
-function Endo_Endo() {}
-Endo_Endo.prototype.init = function ( appEndo ) {
-    this.getAppEndo = function () { return appEndo; };
-    return this;
-};
-
 var class_Monoid = makeClass( {
     mempty: null,
     mappend: null
