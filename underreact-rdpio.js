@@ -119,7 +119,9 @@
 // original's comments. :-p
 
 
+// ===================================================================
 // Core functionality the port depends on
+// ===================================================================
 
 function toJson( string ) {
     return JSON.stringify( string );
@@ -525,7 +527,9 @@ function seqNull( s ) {
 }
 
 
+// ===================================================================
 // Signal.lhs
+// ===================================================================
 
 var class_SigTime = makeClass( {
     ins_Ord: null,
@@ -670,7 +674,9 @@ var class_SigAdjeqf = makeClass( {
 
 
 
+// ===================================================================
 // Clock.lhs
+// ===================================================================
 
 var class_HasClock = makeClass( {
     getTime: null
@@ -723,7 +729,9 @@ var ins_jsNumTimeMillis_SigTime = makeInstance( class_SigTime, {
 
 
 
+// ===================================================================
 // Var.lhs
+// ===================================================================
 
 var class_HasVar = makeClass( {
     ins_Monad: null,
@@ -803,7 +811,9 @@ function newChokedEvent(
 
 
 
+// ===================================================================
 // Behavior.lhs
+// ===================================================================
 
 function bfwd( ins_Category ) {
     return ins_Category.id();
@@ -947,7 +957,9 @@ var class_BLift = makeClass( {
 
 
 
+// ===================================================================
 // VatCB.lhs
+// ===================================================================
 
 var class_VatCB = makeClass( {
     ins_Vat: null,
@@ -1097,7 +1109,9 @@ function monce( ins_VatCB, ins_StepCB, op ) {
 
 
 
+// ===================================================================
 // Link.lhs
+// ===================================================================
 
 function LinkUp_LinkUp() {}
 LinkUp_LinkUp.prototype.init = function ( lu_update, lu_stable ) {
@@ -1415,7 +1429,9 @@ function tmin( ins_Ord, x, y ) {
 
 
 
+// ===================================================================
 // RDPIO/Queue.lhs
+// ===================================================================
 
 function Queue_Q() {}
 Queue_Q.prototype.init = function ( q ) {
@@ -1445,7 +1461,9 @@ function singleQ( op ) {
 
 
 
+// ===================================================================
 // RDPIO/CSched.lhs
+// ===================================================================
 
 function CSched_CSched() {}
 CSched_CSched.prototype.init = function ( obj ) {
@@ -1461,7 +1479,9 @@ CSched_CSched.prototype.init = function ( obj ) {
 
 
 
+// ===================================================================
 // RDPIO/Ref.lhs
+// ===================================================================
 
 function Ref_Ref() {}
 Ref_Ref.prototype.init = function ( ref ) {
@@ -1496,66 +1516,60 @@ function modifyRefPrime( ref, f ) {
 
 
 
-// PORT TODO: Port RDPIO/CSchedIO.lhs, below.
+// ===================================================================
+// RDPIO/CSchedIO.lhs
+// ===================================================================
+
+function newCSchedIO( ins_Ord_uid, ins_Ord_t, ioT, dt2us ) {
+    var ouid = ins_Ord_uid;
+    var ot = ins_Ord_t;
+    var m = ins_IO_Monad;
+    // PORT TODO: Make sure we implement newClock like this.
+    return m.bind( newClock( ouid, ot, ioT, dt2us ),
+        function ( clock ) {
+    var cs = new CSched_CSched().init( {
+        // PORT TODO: Implement liftM.
+        // PORT TODO: Make sure we implement getClockTime like this.
+        cs_time: liftM( m, fst )( getClockTime( ouid, ot, clock ) ),
+        cs_time_x: function ( uid ) {
+            return liftM( m, fst )(
+                // PORT TODO: Make sure we implement getClockTimeX
+                // like this.
+                getClockTimeX( ouid, ot, clock, uid ) );
+        },
+        cs_schedule: function ( vSync, tWakeup ) {
+            // PORT TODO: Make sure we implement sleep like this.
+            return sleep( ot, clock, vSync, tWakeup );
+        },
+        cs_reg_new: function ( ix, wdt ) {
+            // PORT TODO: Make sure we implement newActivity like
+            // this.
+            return newActivity( ouid, ot, clock, ix, wdt );
+        },
+        cs_reg_add: function ( ix, t ) {
+            // PORT TODO: Make sure we implement addActivity like
+            // this.
+            return addActivity( ouid, ot, clock, ix, t );
+        },
+        cs_reg_upd: function ( ix, tReg, ts ) {
+            // PORT TODO: Make sure we implement updActivity like
+            // this.
+            return updActivity( ouid, ot, clock, ix, tReg, ts );
+        },
+        cs_reg_clr: function ( ix, ts ) {
+            // PORT TODO: Make sure we implement clrActivity like
+            // this.
+            return clrActivity( ouid, ot, clock, ix, ts );
+        }
+    } );
+    return m.ret( cs );
+    } );
+};
+
+// PORT TODO: Port the following.
 /*
-
-module RDP.RDPIO.CSchedIO
-    ( newCSchedIO
-    ) where
-
-import RDP.RDPIO.CSched
-import RDP.RDPIO.Ref
-
-import qualified Data.Set as S
-import qualified Data.Map as M
-
-import Control.Monad
-import Control.Concurrent (forkIO, threadDelay, ThreadId, killThread, myThreadId)
-import Control.Concurrent.MVar
-import Control.Monad.Fix (mfix)
-
 type DT2US t = t -> t -> Int
 
-newCSchedIO :: (Ord uid, Ord t) 
-            => IO t -- get current time 
-            -> DT2US t -- difftime in microseconds
-            -> IO (CSched IO t uid (MVar ()))
-newCSchedIO ioT dt2us =
-    newClock ioT dt2us >>= \ clock ->
-    let cs = CSched 
-            { cs_time   = liftM fst $ getClockTime clock
-            , cs_time_x = liftM fst . getClockTimeX clock
-            , cs_schedule = sleep clock
-            , cs_reg_new = newActivity clock
-            , cs_reg_add = addActivity clock
-            , cs_reg_upd = updActivity clock
-            , cs_reg_clr = clrActivity clock
-            }
-     in return cs 
-
--------------------------------------------------
--- The Clock
---   Track active vats, so we know about stragglers.
---     pre-incremented to account for maximum drift.
---   Track sleeping vats, so we know whom to wake up. 
---     using MVars for predictable clock thread
---   When stragglers exist, use updates to wake sleeping vats. 
---   When no stragglers, need a timer thread to wake sleepers.
---   Some vats will be in neither list, including new runRDPIO
---     vats and those that don't have any atTime/atTPlus events.
---   An active vat might register inactive vats as active before
---     advancing in time. This might cause a single vat to be
---     registered for more than one time, due to a race-condition,
---     but vats will correct this automatically. 
---
---  CONDITIONS FOR WAKING SLEEPERS:
---    (1) worst 'straggler' time changes (clearActivity, updateActivity)
---    (2) Time is not bounded by stragglers, use a timer event.
---
--- The clock attempts to minimize use of the timer, and minimize
--- lookups for wall clock time. 
--- 
--------------------------------------------------
 data Clock t uid = Clock 
     { registry :: Ref (Reg t uid) -- registered activity (delays clock)
     , sleepers :: Ref (QSleep t)  -- logical-time wakeup requests
