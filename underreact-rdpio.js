@@ -1502,12 +1502,866 @@ function modifyRefPrime( ref, f ) {
 
 
 
+// PORT TODO: Port RDPIO/CSchedIO.lhs, below.
+/*
+
+module RDP.RDPIO.CSchedIO
+    ( newCSchedIO
+    ) where
+
+import RDP.RDPIO.CSched
+import RDP.RDPIO.Ref
+
+import qualified Data.Set as S
+import qualified Data.Map as M
+
+import Control.Monad
+import Control.Concurrent (forkIO, threadDelay, ThreadId, killThread, myThreadId)
+import Control.Concurrent.MVar
+import Control.Monad.Fix (mfix)
+
+type DT2US t = t -> t -> Int
+
+newCSchedIO :: (Ord uid, Ord t) 
+            => IO t -- get current time 
+            -> DT2US t -- difftime in microseconds
+            -> IO (CSched IO t uid (MVar ()))
+newCSchedIO ioT dt2us =
+    newClock ioT dt2us >>= \ clock ->
+    let cs = CSched 
+            { cs_time   = liftM fst $ getClockTime clock
+            , cs_time_x = liftM fst . getClockTimeX clock
+            , cs_schedule = sleep clock
+            , cs_reg_new = newActivity clock
+            , cs_reg_add = addActivity clock
+            , cs_reg_upd = updActivity clock
+            , cs_reg_clr = clrActivity clock
+            }
+     in return cs 
+
+-------------------------------------------------
+-- The Clock
+--   Track active vats, so we know about stragglers.
+--     pre-incremented to account for maximum drift.
+--   Track sleeping vats, so we know whom to wake up. 
+--     using MVars for predictable clock thread
+--   When stragglers exist, use updates to wake sleeping vats. 
+--   When no stragglers, need a timer thread to wake sleepers.
+--   Some vats will be in neither list, including new runRDPIO
+--     vats and those that don't have any atTime/atTPlus events.
+--   An active vat might register inactive vats as active before
+--     advancing in time. This might cause a single vat to be
+--     registered for more than one time, due to a race-condition,
+--     but vats will correct this automatically. 
+--
+--  CONDITIONS FOR WAKING SLEEPERS:
+--    (1) worst 'straggler' time changes (clearActivity, updateActivity)
+--    (2) Time is not bounded by stragglers, use a timer event.
+--
+-- The clock attempts to minimize use of the timer, and minimize
+-- lookups for wall clock time. 
+-- 
+-------------------------------------------------
+data Clock t uid = Clock 
+    { registry :: Ref (Reg t uid) -- registered activity (delays clock)
+    , sleepers :: Ref (QSleep t)  -- logical-time wakeup requests
+    , setTimer :: t -> IO ()      -- schedule wakeup event for time T
+    , ioTime   :: IO t            -- get wallclock time
+    -- , diffTime :: t -> t -> Integer -- time difference (a-b) in microseconds
+    }
+
+-- generate a new logical clock.    
+newClock :: (Ord uid, Ord t) 
+         => IO t 
+         -> DT2US t 
+         -> IO (Clock t uid)
+newClock ioT diffT = mfix $ \ thisClock ->
+    newRef emptyReg >>= \ x ->
+    newRef emptyQSleep >>= \ s ->
+    newTimer ioT diffT (wakeup thisClock) >>= \ tr ->
+    return Clock 
+            { registry=x
+            , sleepers=s
+            , setTimer=tr
+            , ioTime=ioT
+            }
+
+-- getClockTime: returns (clockTime,bBounded) 
+--  current logical time for clock, and whether this time is bounded
+--  by a straggling vat. Clock time is the lesser of wall-clock time
+--  and straggler time. Wall-clock time is now passed as an argument
+--  to getClockTime.
+-- The ideal case is when wall-clock time is the limit.
+getClockTime :: (Ord uid, Ord t) 
+             => Clock t uid 
+             -> IO (t,Bool)
+getClockTime clock = ioTime clock >>= \ currT -> 
+                     getClockTime' clock currT
+
+getClockTime' :: (Ord uid, Ord t) 
+              => Clock t uid 
+              -> t 
+              -> IO (t,Bool)
+getClockTime' clock maxT = 
+    readRef (registry clock) >>= \ reg ->
+    case registryTime reg of
+      Nothing -> return (maxT,False)
+      Just rt -> return $! if(maxT < rt) 
+                            then (maxT,False) 
+                            else (rt,True)
+
+-- getClockTimeX: returns (time,bBounded)
+--  while ignoring a specified vat ID, which is convenient for
+--  deciding how far a vat's time can be lept in spite of 
+--  race conditions with remote vat registration.
+getClockTimeX :: (Ord uid, Ord t) 
+              => Clock t uid  
+              -> uid
+              -> IO (t,Bool)
+getClockTimeX clock ix = ioTime clock >>= \ currT ->
+                         getClockTimeX' clock ix currT
+
+getClockTimeX' :: (Ord uid, Ord t)
+               => Clock t uid 
+               ->  uid
+               -> t -> IO (t,Bool)
+getClockTimeX' clock ix maxT =
+    readRef (registry clock) >>= \ reg ->
+    case registryTimeX ix reg of 
+      Nothing -> return (maxT,False)
+      Just rt -> return $! if (maxT < rt) 
+                    then (maxT,False) 
+                    else (rt,True)
+
+-- generic wakeup event.
+wakeup :: (Ord uid, Ord t)
+       => Clock t uid 
+       -> t 
+       -> IO ()
+wakeup clock currT =
+    getClockTime' clock currT >>= \ (clockT,bBounded) ->
+    wakeupSleepers (sleepers clock) clockT >>
+    unless bBounded (resetTimer clock)
+
+sleep :: (Ord t)
+      => Clock t uid 
+      -> MVar () 
+      -> t 
+      -> IO ()
+sleep clock vSync tWakeup  =
+    vSync `seq` tWakeup `seq`  
+    modifyRef' (sleepers clock) addSleeper >>= \ bReset ->
+    when bReset (setTimer clock tWakeup)
+    where addSleeper qs = 
+            let qs' = gotoSleep tWakeup vSync qs
+                bUpd = (sleepersTime qs) /= (sleepersTime qs')
+             in (qs',bUpd)
+
+wakeupNow :: (Ord uid, Ord t) => Clock t uid -> IO ()
+wakeupNow clock = 
+    ioTime clock >>= \ tNow -> 
+    wakeup clock tNow
+
+-- set clock to wake the next sleeper. 
+resetTimer :: (Ord uid, Ord t) => Clock t uid -> IO ()
+resetTimer clock = 
+    readRef (sleepers clock) >>= \ s ->
+    case sleepersTime s of
+      Nothing -> return ()
+      Just nextT  -> setTimer clock nextT
+
+
+-- newActivity is used to 'secure' the clock against advancing too
+-- far. This is called every time a sleeping vat wakes up. Note that
+-- newActivity treats the caller vat as if it were unregistered, for 
+-- purpose of deciding the target registration time.
+--   Inputs: ID of vat being registered
+--           protection difference (added to clock time)
+--           clock
+--   Outputs: (clock time, protected time).
+newActivity :: (Ord uid, Ord t) => Clock t uid -> uid -> (t -> t) -> IO (t,t)
+newActivity clock ix wdt  =
+    ix `seq`
+    ioTime clock >>= \ currT ->
+    modifyRef (registry clock) (ins currT) 
+    where ins tCurr s = 
+            let tLimit = (registryTimeX ix s)
+                tClock = maybe tCurr (min tCurr) tLimit
+                tReg   = wdt tClock
+                s'     = addReg ix tReg s
+             in (s',(tClock,tReg))
+
+-- addActivity must be called from an already active vat, for a time 
+-- greater than or equal to its prior activity. Violation of this
+-- would allow a vat to fall further behind than its configured drift.
+addActivity :: (Ord uid, Ord t) => Clock t uid -> uid -> t -> IO ()
+addActivity clock ix t = 
+    ix `seq` t `seq`
+    modifyRef (registry clock) ins
+    where ins s = let s' = addReg ix t s
+                   in (s',())
+
+-- clear activities. If the cleared vat was a straggler, this
+-- might cause other vats to wake up. 
+clrActivity :: (Ord uid, Ord t) => Clock t uid -> uid -> [t] -> IO ()
+clrActivity _ _ [] = return ()
+clrActivity clock ix ts =
+    modifyRef (registry clock) del >>= \ bUpd ->
+    when bUpd (wakeupNow clock)
+    where del s = let s' = delRegList ix ts s
+                      bUpd = (registryTime s) /= (registryTime s')
+                   in (s',bUpd)
+
+-- Atomically reset the activity of an already active vat,
+-- similar to addActivity and clearActivity but in one step.
+-- Consistency requires that the vat already be registered. 
+updActivity :: (Ord uid, Ord t) => Clock t uid -> uid -> t -> [t] -> IO ()
+updActivity clock ix tReg ts =
+    ix `seq` tReg `seq`
+    modifyRef (registry clock) upd >>= \ bUpd ->
+    when bUpd (wakeupNow clock)
+    where upd s = let s'   = updReg ix tReg ts s
+                      bUpd = (registryTime s) /= (registryTime s')
+                   in (s',bUpd)
+
+------------------------------------------------------------
+-- A Timer is defined to execute a specific event, and may
+-- be scheduled for one future time. A timer may be rescheduled,
+-- but only to an earlier moment. A timer will execute once
+-- after being scheduled, with a best effort to run at the
+-- time it was scheduled. After running, the timer must be
+-- explicitly reset.
+--
+-- Goal is precision and minimum of overhead.
+------------------------------------------------------------
+
+-- create a new timer object
+newTimer :: (Ord t) 
+         => IO t                -- get current time
+         -> DT2US t -- difftime in microseconds
+         -> (t -> IO ())        -- on alert action
+         -> IO (t -> IO ())     -- capability to set alert
+newTimer ioT diffT alert =
+    newMVar ()     >>= \ mx ->
+    newRef Nothing >>= \ st -> 
+    return (setTimer' ioT diffT alert mx st)
+
+-- request the timer to execute near a given wall-clock time.
+-- currently using MVar based lock. 
+setTimer' :: (Ord t)
+          => IO t
+          -> DT2US t
+          -> (t -> IO ())
+          -> MVar ()
+          -> Ref (Maybe (t,ThreadId))
+          -> (t -> IO ()) 
+setTimer' ioT diffT alert mx st t = 
+    t `seq` 
+    takeMVar mx >>
+    reset >>
+    putMVar mx ()
+    where reset =
+            readRef st >>= \ s0 ->
+            case s0 of
+              Nothing -> 
+                forkTimerThread 
+              Just (t0,i0) ->
+                -- only set timer if setting to earlier time
+                when (t < t0) $ 
+                  killThread i0 >>
+                  forkTimerThread
+          forkTimerThread = 
+            forkIO (timerThread ioT diffT alert mx st t) >>= \ i -> 
+            writeRef st (Just (t,i)) 
+
+
+-- wait until a specific time, then execute the event.
+timerThread :: (Ord t) 
+            => IO t 
+            -> DT2US t
+            -> (t -> IO ())
+            -> MVar ()
+            -> Ref (Maybe (t,ThreadId))
+            -> t
+            -> IO ()
+timerThread ioT diffT alert mx st tt =
+    waitUntil ioT diffT tt >>= \ tf ->
+    myThreadId >>= \ i ->
+    takeMVar mx  >>
+    readRef st >>= \ s0 ->
+    if isTimerThread i s0
+        then writeRef st Nothing >>
+             putMVar mx () >>
+             alert tf
+        else putMVar mx ()
+    where isTimerThread _ Nothing = False
+          isTimerThread i (Just (_,ix)) = (i == ix)
+
+-- wait until a certain time is reached or breached. return time.
+waitUntil :: (Ord t)
+          => IO t
+          -> DT2US t
+          -> t 
+          -> IO t
+waitUntil ioT diffT tTarget =
+    ioT >>= \ tNow ->
+    if (tNow < tTarget)
+        then threadDelay (d0 + diffT tTarget tNow) >>= \ _ -> 
+             waitUntil ioT diffT tTarget
+        else return tNow
+    where d0 = 50 -- to avoid near-zero delays
+
+-----------------------------------------------------------
+-- Registrations with Clock
+--   The purpose of registrations is to track activity and
+--   prevent logical time from advancing too far past the 
+--   worst straggler. When an active vat updates an inactive
+--   vat, the inactive vat will immediately be registered 
+--   as a potential straggler to ensure it processes those
+--   updates. In some cases, this could allow a vat to be
+--   registered multiple times, so each vat will clear
+--   unnecessary registrations. 
+--
+--   We need to know when dropping a registration also 
+--   increases the registryTime. When that happens, we
+--   can wake up sleeping vats. 
+----------------------------------------------------------- 
+type Reg t uid = S.Set (t,uid)
+
+emptyReg :: (Ord t, Ord uid) => Reg t uid
+emptyReg = S.empty
+
+-- find the worst straggler time
+registryTime :: (Ord t, Ord uid) => Reg t uid -> Maybe t
+registryTime rg = if(S.null rg) 
+                    then Nothing 
+                    else Just (fst (S.findMin rg))
+
+-- find the worst straggler time, ignoring a particular UID
+registryTimeX :: (Ord t, Ord uid) => uid -> Reg t uid -> Maybe t
+registryTimeX ix rg =
+    if(S.null rg) then Nothing
+    else let ((tMin,ixMin),rg') = S.deleteFindMin rg
+          in if(ix == ixMin) then registryTimeX ix rg'
+                             else Just tMin
+
+-- add an activity
+addReg :: (Ord t, Ord uid) => uid -> t -> Reg t uid -> Reg t uid
+addReg ix tm = ix `seq` tm `seq` S.insert (tm,ix)
+
+-- remove an activity.
+delReg :: (Ord t, Ord uid) => uid -> t -> Reg t uid -> Reg t uid
+delReg ix t = S.delete (t,ix)
+
+-- remove list of activities
+delRegList :: (Ord t, Ord uid) => uid -> [t] -> Reg t uid -> Reg t uid
+delRegList ix ts reg = foldl (flip $ delReg ix) reg ts
+
+-- update: add an activity while removing older list. The added 
+-- activity will be registered even if it overlaps a removed element
+updReg :: (Ord t, Ord uid) => uid -> t -> [t] -> Reg t uid -> Reg t uid
+updReg ix tAdd tsDel r = addReg ix tAdd (delRegList ix tsDel r)
+
+-----------------------------------------------------------
+-- Sleepers -
+--   A set of unit MVars to signal at given times (according
+--   to the logical clock). 
+------------------------------------------------------------
+type QSleep t = M.Map t [MVar ()]
+
+emptyQSleep :: (Ord t) => QSleep t
+emptyQSleep = M.empty
+
+sleepersTime :: (Ord t) => QSleep t -> Maybe t
+sleepersTime qs = if(M.null qs) 
+                    then Nothing 
+                    else Just (fst (M.findMin qs))
+
+-- add a sleeper, sorted in time. 
+gotoSleep :: (Ord t) => t -> MVar () -> QSleep t -> QSleep t
+gotoSleep tm e = M.alter pushVar tm
+    where pushVar Nothing   = Just (e:[])
+          pushVar (Just xs) = Just (e:xs)
+
+-- atomically take a subset of sleepers through requested time.
+-- wake them using tryPutMVar, from earliest time to latest
+wakeupSleepers :: (Ord t) => Ref (QSleep t) -> t -> IO ()
+wakeupSleepers qref tm = 
+    modifyRef' qref split >>= \ (l,m) ->
+    mapM_ wakeL (M.elems l) >>
+    maybe (return ()) wakeL m
+    where split q = let (l,m,r) = M.splitLookup tm q
+                     in (r, (l, m))
+          wake e = tryPutMVar e ()
+          wakeL  = mapM_ wake
+*/
+
+
+
+// PORT TODO: Port BehADT.lhs, below.
+/*
+
+{-# LANGUAGE GADTs, TypeOperators, Rank2Types #-}
+
+module RDP.Behavior 
+    ( S (..), OpMeta(..)
+    , B (..)
+    , BD (..), bdfst, bdsnd, bdonl, bdonr
+    , BMapFn, BMapMFn
+    , BFoldLFn, BFoldMLFn, BFoldMapLFn, BFoldMapMLFn
+    , BFoldRFn, BFoldMRFn, BFoldMapRFn, BFoldMapMRFn
+    , bmap, bmapm
+    , bfoldmapl, bfoldmapml, bfoldl, bfoldml
+    , bfoldmapr, bfoldmapmr, bfoldr, bfoldmr
+    , QA(..), QL(..), QR(..), getA, getQ
+    , bsimplify
+    ) where
+
+import Data.AffineSpace 
+import Data.AdditiveGroup
+import Control.Monad.Identity
+import RDP.RDSignal
+import RDP.RDBehavior ((:&:),(:|:))
+
+-- Function types used in folds over maps.
+type BMapFn a a' x y = a x y -> a' x y
+type BMapMFn a a' m x y = a x y -> m (a' x y)
+type BFoldLFn u t l a x y = BD u t l x -> a x y -> BD u t l y
+type BFoldRFn u t l a x y = a x y -> BD u t l y -> BD u t l x
+type BFoldMLFn u t l a m x y = BD u t l x -> a x y -> m (BD u t l y)
+type BFoldMRFn u t l a m x y = a x y -> BD u t l y -> m (BD u t l x)
+type BFoldMapLFn u t l a a' x y = BD u t l x -> a x y -> (a' x y, BD u t l y)
+type BFoldMapRFn u t l a a' x y = a x y -> BD u t l y -> (BD u t l x, a' x y)
+type BFoldMapMLFn u t l a a' m x y = BD u t l x -> a x y -> m (a' x y, BD u t l y)
+type BFoldMapMRFn u t l a a' m x y = a x y -> BD u t l y -> m (BD u t l x, a' x y)
+
+-- | some extra metadata to help with simplification
+-- (so far just stuff from BLMeta)
+data OpMeta = OpMeta
+    { op_show :: String -- ^ string for debugging
+    , op_query :: Bool  -- ^ behavior is query, or otherwise safe to drop 
+    , op_tsen :: Bool   -- ^ behavior is time-sensitive, unsafe to time-shift
+    }
+
+-- | Signal operations. 
+-- Type `u` is a universal unit signal, and `t` is associated time.
+-- Type `a` is for effects, eval, exec, and other extensions.
+data S u t a x y where 
+    -- Effects, Eval, Exec, Extensions, etc.
+    Sop     :: OpMeta -> a x y -> S u t a x y
+
+    -- Value Manipulations. 
+    -- Sfmap comes with an extra string for `show`.
+    Sfmap   :: (SigFun f s t) => String -> f x y -> S u t a (s x) (s y)
+    Sdrop   :: (SigShadow u s t, SigShadow s u t) => S u t a x (s ())
+    Sconv   :: (SigShadow s' u t, SigLift s s' t) => S u t a (s x) (s' x)
+
+    -- Value Composition (that requires touching signals)
+    Sdup    :: S u t a x (x :&: x)
+    Smerge  :: S u t a (x :|: x) x
+    Sdisj   :: S u t a (x :&: (y :|: z)) ((x :&: y) :|: (x :&: z))
+    Sconj   :: S u t a ((x :&: y) :|: (x :&: z)) (x :&: (y :|: z))
+    Szip    :: (Signal s t) => S u t a (s x :&: s y) (s (x,y))
+    Ssplit  :: (SigSplit s t) => S u t a (s (Either x y)) (s x :|: s y)
+
+    -- Temporal Manipulations
+    Sdelay  :: (SigTime t) => Diff t -> S u t a x x
+    Ssynch  :: S u t a x x 
+    Speek   :: (SigPeek s t) => Diff t -> S u t a (s x) (s () :|: s x)
+        -- merge, zip, disjoin, and conjoin implicitly synch
+
+-- NOTE:
+-- Eval and Exec are handled as special operations (Sop)
+-- to avoid direct dependency of S on B.
+--   eval :: b x y -> ((s (b x y) :&: x) ~> y)
+--   exec :: (s (b x y) :&: x) ~> s ()
+
+-- | Data-plumbing behaviors
+-- 'a' is the data processing and effect type
+-- typically, a = S t a2 for some agent type a2
+--
+-- A minimal set is chosen, at expense of extra complexity in the
+-- simplification code.
+data B a x y where
+    -- Effects, Signal Transforms, Delays, Annotations, Etc. 
+    Bop   :: a x y -> B a x y
+
+    -- Category (Sequential Composition)
+    Bfwd  :: B a x x
+    Bseq  :: B a x y -> B a y z -> B a x z
+
+    -- Product (Parallel Composition)
+    Bofst :: B a x x' -> B a (x :&: y) (x' :&: y)
+    Bfst  :: B a (x :&: y) x
+    Bswap :: B a (x :&: y) (y :&: x)
+    Bapl  :: B a (x :&: (y :&: z)) ((x :&: y) :&: z)
+
+    -- Sum (Conditional Composition)
+    Bolft :: B a x x' -> B a (x :|: y) (x' :|: y)
+    Binl  :: B a x (x :|: y)
+    Bmirr :: B a (x :|: y) (y :|: x)
+    Basl  :: B a (x :|: (y :|: z)) ((x :|: y) :|: z)
+
+-- | data about boundaries between behaviors (RDP specific)
+-- Propagates shadow signals through the model:
+--   SigShadow s u t is necessary for `bdrop` 
+--   SigShadow u s t is necessary for `bdisjoin` mask
+data BD u t l x where
+    BDSig  :: (SigShadow s u t, SigShadow u s t) => l s a -> BD u t l (s a)
+    BDProd :: BD u t l x -> BD u t l y -> BD u t l (x :&: y)
+    BDSum  :: BD u t l x -> BD u t l y -> BD u t l (x :|: y)
+    BDNull :: BD u t l x  -- for dead code due to inl, inr, fst, snd 
+
+-- | accessors
+bdfst :: BD u t l (x :&: y) -> BD u t l x
+bdsnd :: BD u t l (x :&: y) -> BD u t l y
+bdonl :: BD u t l (x :|: y) -> BD u t l x
+bdonr :: BD u t l (x :|: y) -> BD u t l y
+
+bdfst (BDProd x _) = x
+bdfst _ = BDNull
+
+bdsnd (BDProd _ y) = y
+bdsnd _ = BDNull
+
+bdonl (BDSum x _) = x
+bdonl _ = BDNull
+
+bdonr (BDSum _ y) = y
+bdonr _ = BDNull
+
+-- types to annotate behaviors
+newtype QL u t l x y = QL { unQL :: BD u t l x }
+newtype QR u t r x y = QR { unQR :: BD u t r y }
+
+-- for accumulating annotations
+newtype QA q a x y = QA { unQA :: (q x y, a x y) }
+getQ :: QA q a x y -> q x y
+getQ = fst . unQA
+getA :: QA q a x y -> a x y
+getA = snd . unQA
+
+----------------------------
+-- BEHAVIOR FOLD MAP LEFT --
+----------------------------
+
+-- | Map a function and generate a value, with effects:
+-- from left to right, first to second, inputs to outputs.
+--
+-- This function can expand the behavior graph, cannot shrink it.
+bfoldmapml :: (Monad m) 
+           => (forall d r . BFoldMapMLFn u t l a (B a') m d r)
+           -> BFoldMapMLFn u t l (B a) (B a') m x y
+-- for Extension
+bfoldmapml af x (Bop a) = af x a
+
+-- for Category
+bfoldmapml _ x Bfwd = return (Bfwd,x)
+bfoldmapml af x (Bseq f g) =
+    bfoldmapml af x f >>= \ (f',y) ->
+    bfoldmapml af y g >>= \ (g',z) ->
+    return (Bseq f' g', z)
+
+-- for Product
+bfoldmapml af xy (Bofst f) =
+    bfoldmapml af (bdfst xy) f >>= \ (f',x') ->
+    return (Bofst f', BDProd x' (bdsnd xy))
+bfoldmapml _ xy Bfst  = return (Bfst, bdfst xy)
+bfoldmapml _ xy Bswap = return (Bswap, BDProd (bdsnd xy) (bdfst xy))
+bfoldmapml _ xyz Bapl = return (Bapl, BDProd (BDProd x y) z)
+    where x  = bdfst xyz
+          yz = bdsnd xyz
+          y  = bdfst yz
+          z  = bdsnd yz
+
+-- for Sum
+bfoldmapml af xy (Bolft f) =
+    bfoldmapml af (bdonl xy) f >>= \ (f',x') ->
+    return (Bolft f', BDSum x' (bdonr xy))
+bfoldmapml _ x Binl = return (Binl, BDSum x BDNull)
+bfoldmapml _ xy Bmirr = return (Bmirr, BDSum (bdonr xy) (bdonl xy))
+bfoldmapml _ xyz Basl = return (Basl, BDSum (BDSum x y) z)
+    where x  = bdonl xyz
+          yz = bdonr xyz
+          y  = bdonl yz
+          z  = bdonr yz 
+
+-----------------------------
+-- BEHAVIOR FOLD MAP RIGHT --
+-----------------------------
+
+-- | Map a function and generate a value, with effects:
+-- from right to left, second to first, outputs to inputs
+--
+-- This function expands the behavior graph, cannot shrink it.
+bfoldmapmr :: (Monad m)
+           => (forall d r . BFoldMapMRFn u t l a (B a') m d r)
+           -> BFoldMapMRFn u t l (B a) (B a') m x y
+-- for Extension
+bfoldmapmr af (Bop a) y = af a y
+
+-- for Category
+bfoldmapmr _ Bfwd x = return (x,Bfwd)
+bfoldmapmr af (Bseq f g) z =
+    bfoldmapmr af g z >>= \ (y,g') ->
+    bfoldmapmr af f y >>= \ (x,f') ->
+    return (x, Bseq f' g')
+
+-- for Product
+bfoldmapmr af (Bofst f) xy =
+    bfoldmapmr af f (bdfst xy) >>= \ (x',f') ->
+    return (BDProd x' (bdsnd xy), Bofst f')
+bfoldmapmr _ Bfst x = return (BDProd x BDNull, Bfst)
+bfoldmapmr _ Bswap yx = return (BDProd (bdsnd yx) (bdfst yx), Bswap)
+bfoldmapmr _ Bapl xyz = return (BDProd x (BDProd y z), Bapl)
+    where xy = bdfst xyz
+          x  = bdfst xy
+          y  = bdsnd xy
+          z  = bdsnd xyz
+
+-- for Sum
+bfoldmapmr af (Bolft f) xy =
+    bfoldmapmr af f (bdonl xy) >>= \ (x',f') ->
+    return (BDSum x' (bdonr xy), Bolft f') 
+bfoldmapmr _ Binl xy = return (bdonl xy, Binl)
+bfoldmapmr _ Bmirr yx = return (BDSum (bdonr yx) (bdonl yx), Bmirr)
+bfoldmapmr _ Basl xyz = return (BDSum x (BDSum y z), Basl)
+    where xy = bdonl xyz
+          x  = bdonl xy
+          y  = bdonr xy
+          z  = bdonr xyz
+
+---------------------------------------------------------------
+-- OTHER FOLD AND MAP OPERATIONS (DEFINED IN TERMS OF ABOVE) --
+---------------------------------------------------------------
+
+-- | map a transform across all domain elements in behavior
+bmap :: (forall d r . BMapFn a (B a') d r) -> BMapFn (B a) (B a') x y
+bmap af = runIdentity . bmapm (Identity . af)
+
+-- | map a monadic transform across all domain elements of behavior
+bmapm :: (Monad m) => (forall d r . BMapMFn a (B a') m d r)
+      -> BMapMFn (B a) (B a') m x y
+bmapm af b = bfoldmapml (bmapmf af) BDNull b >>= return . fst
+
+bmapmf :: (Monad m) => BMapMFn a (B a') m d r 
+       -> BFoldMapMLFn u t l a (B a') m d r
+bmapmf af _ a = af a >>= \ b' -> return (b',BDNull)
+
+-- wrap operation in identity monad
+fnIdent :: (a -> b -> c) -> (a -> b -> Identity c)
+fnIdent fn x y = Identity (fn x y)
+
+-- | map a function and generate a value, from inputs to outputs
+bfoldmapl  :: (forall d r . BFoldMapLFn u t l a (B a') d r)
+           -> BFoldMapLFn u t l (B a) (B a') x y
+bfoldmapl af x0 b = runIdentity $ bfoldmapml (fnIdent af) x0 b
+
+-- | map a function and generate a value, from outputs to inputs
+bfoldmapr  :: (forall d r . BFoldMapRFn u t l a (B a') d r)
+           -> BFoldMapRFn u t l (B a) (B a') x y
+bfoldmapr af b y0 = runIdentity $ bfoldmapmr (fnIdent af) b y0
+
+-- | generate a value from the left
+bfoldl  :: (forall d r . BFoldLFn u t l a d r) -> BFoldLFn u t l (B a) x y
+bfoldl af x0 b = snd $ bfoldmapl (bfoldlf af) x0 b 
+
+bfoldlf :: BFoldLFn u t l a d r -> BFoldMapLFn u t l a (B a) d r
+bfoldlf af x a = (Bop a, af x a)
+
+-- | generate a value from the left (with effects)
+bfoldml :: (Monad m) => (forall d r . BFoldMLFn u t l a m d r) 
+        -> BFoldMLFn u t l (B a) m x y
+bfoldml af x0 b = bfoldmapml (bfoldmlf af) x0 b >>= return . snd
+
+bfoldmlf :: (Monad m) => BFoldMLFn u t l a m d r 
+         -> BFoldMapMLFn u t l a (B a) m d r
+bfoldmlf af x a = af x a >>= \ y -> return (Bop a, y)
+
+-- | generate a value from the right
+bfoldr  :: (forall d r . BFoldRFn u t l a d r) -> BFoldRFn u t l (B a) x y
+bfoldr af b y0 = fst $ bfoldmapr (bfoldrf af) b y0
+
+bfoldrf :: BFoldRFn u t l a d r -> BFoldMapRFn u t l a (B a) d r
+bfoldrf af a y = (af a y, Bop a)
+
+-- | generate a value from the right (with effects)
+bfoldmr :: (Monad m) => (forall d r . BFoldMRFn u t l a m d r)
+        -> BFoldMRFn u t l (B a) m x y
+bfoldmr af b y0 = bfoldmapmr (bfoldmrf af) b y0 >>= return . fst
+
+bfoldmrf :: (Monad m) => BFoldMRFn u t l a m d r 
+         -> BFoldMapMRFn u t l a (B a) m d r
+bfoldmrf af a y = af a y >>= \ x -> return (x, Bop a)
+
+---------------------------
+-- Simplifying Behaviors --
+---------------------------
+
+-- Listify a sequence. E.g. (f >>> (g >>> h)) >>> ((i >>> j) >>> k)
+-- reduces to (f >>> (g >>> (h >>> (i >>> (j >>> k))))))
+bseqlist :: B a x y -> B a y z -> B a x z
+bseqlist (Bseq f g) h = bseqlist f (Bseq g h)
+bseqlist f (Bseq g h) = f `Bseq` bseqlist g h
+bseqlist f g = f `Bseq` g 
+
+-- simple list reductions. Assume `r` is simplified, i.e. simplify
+-- starting from right hand side. Shifting of `drop` to left and
+-- `delay` sufficient only to optimize across them.
+bsimplseq :: B (S u t a) x y -> B (S u t a) x y
+bsimplseq (Bseq Bfwd r) = r         -- NOP in sequence
+bsimplseq (Bseq (Bofst Bfwd) r) = r -- NOP on first element
+bsimplseq (Bseq (Bolft Bfwd) r) = r -- NOP on left element.
+    -- combine sequential actions on first element.
+bsimplseq (Bseq (Bofst f) (Bseq (Bofst f') r)) =
+    (Bseq (Bofst (Bseq f f')) r)
+bsimplseq (Bseq (Bofst f) (Bseq Bswap 
+          (Bseq (Bofst g) (Bseq Bswap
+          (Bseq (Bofst f') r))))) = 
+    (Bseq Bswap (Bseq (Bofst g)
+    (Bseq Bswap (Bseq (Bofst (Bseq f f')) r))))
+    -- combine sequential actions on left element
+bsimplseq (Bseq (Bolft f) (Bseq (Bolft f') r)) =
+    (Bolft (Bseq f f') `Bseq` r)
+bsimplseq (Bseq (Bolft f) (Bseq Bmirr
+          (Bseq (Bolft g) (Bseq Bmirr
+          (Bseq (Bolft f') r))))) = 
+    (Bseq Bmirr (Bseq (Bolft g)
+    (Bseq Bmirr (Bseq (Bolft (Bseq f f')) r))))
+    -- basic reversible behaviors
+bsimplseq (Bseq Bswap (Bseq Bswap r)) = r -- swap/swap
+bsimplseq (Bseq Bmirr (Bseq Bmirr r)) = r -- mirror/mirror
+bsimplseq (Bseq (Bop Sconj) (Bseq (Bop Sdisj) r)) = r -- conjoin/disjoin
+bsimplseq (Bseq (Bop Sdisj) (Bseq (Bop Sconj) r)) = r -- disjoin/conjoin
+    -- assoc-left and assoc-right, via swap3 or mirror3 
+bsimplseq (Bseq (Bofst Bswap) (Bseq Bswap (Bseq Bapl
+          (Bseq (Bofst Bswap) (Bseq Bswap (Bseq Bapl r)))))) = r
+bsimplseq (Bseq Bapl (Bseq (Bofst Bswap) (Bseq Bswap
+          (Bseq Bapl (Bseq (Bofst Bswap) (Bseq Bswap r)))))) = r
+bsimplseq (Bseq (Bolft Bmirr) (Bseq Bmirr (Bseq Basl
+          (Bseq (Bolft Bmirr) (Bseq Bmirr (Bseq Basl r)))))) = r
+bsimplseq (Bseq Basl (Bseq (Bolft Bmirr) (Bseq Bmirr
+          (Bseq Basl (Bseq (Bolft Bmirr) (Bseq Bmirr r)))))) = r
+    -- time-shifts and time merges
+bsimplseq (Bseq (Bop Ssynch) (Bseq (Bop Ssynch) r)) = 
+    (Bseq (Bop Ssynch) r)
+bsimplseq (Bseq (Bop (Sdelay d0)) (Bseq (Bop (Sdelay d1)) r)) =
+    (Bseq (Bop (Sdelay (d0 ^+^ d1))) r)
+bsimplseq b@(Bseq (Bop (Sdelay dt)) (Bseq f r)) =
+    if bshiftable f 
+        then (Bseq f (bsimplseq (Bseq (Bop (Sdelay dt)) r)))
+        else b
+    -- distribute drop across a product or sum.
+bsimplseq (Bseq (Bofst f) (Bseq d@(Bop Sdrop) r)) =
+    let f' = (Bseq f (dupdrop d)) in
+    (Bseq (Bofst f') (Bseq (Bop Sdrop) r))
+bsimplseq (Bseq (Bofst f) (Bseq Bswap
+          (Bseq (Bofst g) (Bseq d@(Bop Sdrop) r)))) =
+    let f' = (Bseq f (dupdrop d)) in
+    (Bseq (Bofst f') (Bseq Bswap
+    (Bseq (Bofst g) (Bseq (Bop Sdrop) r))))
+bsimplseq (Bseq (Bolft f) (Bseq d@(Bop Sdrop) r)) =
+    let f' = (Bseq f (dupdrop d)) in
+    (Bseq (Bolft f') (Bseq (Bop Sdrop) r))
+bsimplseq (Bseq (Bolft f) (Bseq Bmirr 
+          (Bseq (Bolft g) (Bseq d@(Bop Sdrop) r)))) =
+    let f' = (Bseq f (dupdrop d)) in
+    (Bseq (Bolft f') (Bseq Bmirr
+    (Bseq (Bolft g) (Bseq (Bop Sdrop) r))))
+    -- distribute drop across merge
+bsimplseq (Bseq (Bop Smerge) (Bseq d@(Bop Sdrop) r)) =
+    (Bseq (Bolft (dupdrop d)) (Bseq Bmirr
+    (Bseq (Bolft (dupdrop d)) (Bseq Bmirr
+    (Bseq (Bop Smerge) (Bseq (Bop Sdrop) r))))))
+    -- eliminate other droppable elements
+bsimplseq b@(Bseq f (Bseq (Bop Sdrop) r)) =
+    if bdroppable f 
+        then (Bseq (Bop Sdrop) r) 
+        else b
+    -- none of the above? call it simplified.
+bsimplseq b = b
+
+-- dupdrop eliminates ambiguity in signal output type of the drop.
+dupdrop :: B (S u t a) x (s ()) -> B (S u t a) x' (s ())
+dupdrop (Bop Sdrop) = Bop Sdrop
+dupdrop _ = error "illegal dupdrop"
+
+
+-- Shiftable means delay can be shifted to after this action. This
+-- is a conservative estimate, supports other simplifications. Does
+-- not split, dup, merge, or zip delays.
+--
+-- Droppable means that the behavior can be dropped if its output is
+-- dropped. This is simplistic dead-code elimination. 
+bshiftable, bdroppable :: B (S u t a) x y -> Bool
+sshiftable, sdroppable :: S u t a x y -> Bool
+
+bshiftable (Bop s) = sshiftable s
+bshiftable Bfwd = True
+bshiftable Bfst = True
+bshiftable Bswap = True
+bshiftable Bapl = True
+bshiftable Binl = True
+bshiftable Bmirr = True
+bshiftable Basl = True
+bshiftable _ = False
+
+bdroppable (Bop s) = sdroppable s
+bdroppable Bfwd = True
+bdroppable Bswap = True
+bdroppable Bapl = True
+bdroppable Binl = True
+bdroppable Bmirr = True
+bdroppable Basl = True
+bdroppable _ = False
+
+sshiftable (Sop m _) = not $ op_tsen m
+sshiftable (Sfmap _ _) = True
+sshiftable Sconv = True
+sshiftable Sdrop = True
+sshiftable Smerge = True
+sshiftable Sdisj = True
+sshiftable Sconj = True
+sshiftable Szip = True
+sshiftable Ssynch = True
+sshiftable _ = False
+
+sdroppable (Sop m _) = op_query m
+sdroppable (Sfmap _ _) = True
+sdroppable Sconv = True
+sdroppable Sdrop = True
+sdroppable Sdup = True
+sdroppable Sdisj = True
+sdroppable Sconj = True
+sdroppable Szip = True
+sdroppable Ssplit = True
+sdroppable (Speek _) = True
+sdroppable Ssynch = True
+sdroppable _ = False
+
+-- simplify sequences from right to left.
+bsimplify' :: B (S u t a) x y -> B (S u t a) x y
+bsimplify' (Bseq f g) = bsimplseq (Bseq f (bsimplify' g))
+bsimplify' f = f
+
+-- simplify sub-sequences and remove final `Bfwd`
+bsimplsub :: B (S u t a) x y -> B (S u t a) x y
+bsimplsub (Bseq f Bfwd) = bsimplsub f
+bsimplsub (Bseq f g) = Bseq (bsimplsub f) (bsimplsub g)
+bsimplsub (Bofst f) = Bofst (bsimplify f)
+bsimplsub (Bolft f) = Bolft (bsimplify f)
+bsimplsub f = f
+
+-- | bsimplify is peephole simplification of a behavior.
+bsimplify :: B (S u t a) x y -> B (S u t a) x y
+bsimplify = bsimplsub . bsimplify' . flip bseqlist Bfwd
+*/
+
+
 /*
 
 TODO: Port the following files:
 
-RDPIO/CSchedIO.lhs
-BehADT.lhs (Behavior)
 RDPIO/Time.lhs
 RDPIO/Host.lhs
 RDPIO/State.lhs
