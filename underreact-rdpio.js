@@ -206,6 +206,40 @@ function writeChan( chan, element ) {
     } );
 }
 
+function IORef() {}
+IORef.prototype.init = function ( val ) {
+    this.val = val;
+    return this;
+};
+
+function newIORef( val ) {
+    return io( function () {
+        return new IORef().init( val );
+    } );
+}
+
+function readIORef( ref ) {
+    return io( function () {
+        return ref.val;
+    } );
+}
+
+function writeIORef( ref, val ) {
+    return io( function () {
+        ref.val = val;
+        return [];
+    } );
+}
+
+function atomicModifyIORef( ref, f ) {
+    return io( function () {
+        var valAndResult = f( ref.val );
+        var val = valAndResult[ 0 ], result = valAndResult[ 1 ];
+        ref.val = val;
+        return result;
+    } );
+}
+
 function List_Nil() {}
 List_Nil.prototype.init = function () {
     return this;
@@ -216,6 +250,9 @@ List_Cons.prototype.initLazy = function ( getCar, getCdr ) {
     this.getCar = function () { return getCar(); };
     this.getCdr = function () { return getCdr(); };
     return this;
+};
+List_Cons.prototype.init = function ( car, cdr ) {
+    return this.initLazy( kfn( car ), kfn( cdr ) );
 };
 
 function Maybe_Nothing() {}
@@ -265,19 +302,13 @@ function map( f ) {
     return result;
 }
 
-function sequenceDrop( ins_Monad, ms ) {
-    if ( ms instanceof List_Nil )
-        return ms;
-    var m = ms.getCar(), rest = ms.getCdr();
-    return ins_Monad.bind( m, function ( _ ) {
-        return sequenceDrop( ins_Monad, rest );
+function forMDrop( ins_Monad, inputs, f ) {
+    if ( inputs instanceof List_Nil )
+        return ins_Monad.ret( [] );
+    var input = inputs.getCar(), rest = inputs.getCdr();
+    return ins_Monad.bind( f( input ), function ( _ ) {
+        return forMDrop( ins_Monad, rest, f );
     } );
-}
-
-function mapMDrop( ins_Monad, f ) {
-    return function ( list ) {
-        return sequenceDrop( ins_Monad, map( f )( list ) );
-    };
 }
 
 function when( ins_Monad, condition, m ) {
@@ -318,8 +349,9 @@ var ins_IO_Monad = makeInstance( class_Monad, {
 
 var class_Eq = makeClass( {
     // (==)
-    eq: null
-    // PORT TODO: See if there are other members of this class.
+    eq: function ( a, b ) { return !this.neq( a, b ); },
+    // (/=)
+    neq: function ( a, b ) { return !this.eq( a, b ); }
 } );
 
 var class_Ord = makeClass( {
@@ -348,8 +380,8 @@ var ins_jsNum_Eq = makeInstance( class_Eq, {
 
 var ins_jsNum_Ord = makeInstance( class_Ord, {
     ins_Eq: ins_jsNum_Eq,
-    lt: function ( a, b ) {
-        return a < b;
+    lte: function ( a, b ) {
+        return a <= b;
     }
 } );
 
@@ -374,6 +406,129 @@ function minusV( ins_AffineSpace, point, vector ) {
         point, ins_AffineSpace.ins_AdditiveGroup.negateV( vector ) );
 }
 
+// PORT TODO: Implement this more efficiently.
+// Data.Map.Map
+function Dict() {}
+Dict.prototype.init = function () {
+    this.contents = [];
+    return this;
+};
+Dict.prototype.copy = function () {
+    var result = new Dict();
+    result.contents = this.contents.slice();
+    return result;
+};
+
+// Data.Map.empty
+function dictEmpty() {
+    return new Dict().init();
+}
+
+// PORT TODO: See if this is supposed to return the elements in order.
+// Data.Map.elems
+function dictElems( dict ) {
+    var result = new List_Nil().init();
+    for ( var i = this.contents.length - 1; 0 <= i; i-- )
+        result = new List_Cons().init( this.contents[ i ].v, result );
+    return result;
+}
+
+// Data.Map.insert
+function dictInsert( ins_Ord, k, v, dict ) {
+    var result = dict.copy();
+    result.contents.push( { k: k, v: v } )
+    return result;
+}
+
+// Data.Map.delete
+function dictDelete( ins_Ord, k, v, dict ) {
+    var result = new Dict().init();
+    for ( var i = 0, n = dict.contents.length; i < n; i++ )
+        if ( ins_Ord.ins_Eq.neq( dict.contents[ i ].k, k ) )
+            result.contents.push( dict.contents[ i ] );
+    return result;
+}
+
+// Data.Map.null
+function dictNull( dict ) {
+    return dict.contents.length === 0;
+}
+
+var class_Enum = makeClass( {
+    succ: null
+    // PORT TODO: Should we include the other Enum operations?
+} );
+
+// PORT TODO: Actually implement bigints, rather than just providing
+// so-called "bigint" operations on JavaScript numbers.
+function bigint( literal ) {
+    return literal;
+}
+
+var ins_bigint_Eq = makeInstance( class_Eq, {
+    eq: function ( a, b ) {
+        return a === b;
+    }
+} );
+
+var ins_bigint_Ord = makeInstance( class_Ord, {
+    ins_Eq: ins_bigint_Eq,
+    lte: function ( a, b ) {
+        return a <= b;
+    }
+} );
+
+var ins_bigint_Enum = makeInstance( class_Enum, {
+    succ: function ( n ) {
+        return n + 1;
+    }
+} );
+
+function Endo_Endo() {}
+Endo_Endo.prototype.init = function ( appEndo ) {
+    this.getAppEndo = function () { return appEndo; };
+    return this;
+};
+
+var class_Monoid = makeClass( {
+    mempty: null,
+    mappend: null
+    // PORT TODO: Should we include mconcat?
+} );
+
+// Data.Sequence.Sequence
+function Sequence() {}
+Sequence.prototype.init = function ( contents ) {
+    this.contents = contents;
+    return this;
+};
+// PORT NOTE: The original used Data.Foldable.sequence_.
+Sequence.prototype.sequenceDrop = function ( ins_Monad ) {
+    var result = ins_Monad.ret( [] );
+    for ( var i = this.contents.length - 1; 0 <= i; i-- )
+        result = ins_Monad.then( this.contents[ i ], result );
+    return result;
+};
+
+// Data.Sequence.empty
+function seqEmpty() {
+    return new Sequence().init( [] );
+}
+
+// Data.Sequence.singleton
+function seqSingleton( v ) {
+    return new Sequence().init( [ v ] );
+}
+
+// (Data.Sequence.|>)
+function seqPush( s, v ) {
+    return new Sequence().init( s.contents.concat( [ v ] ) );
+}
+
+// Data.Sequence.null
+function seqNull( s ) {
+    return s.contents.length === 0;
+}
 
 
 // Signal.lhs
@@ -1093,10 +1248,8 @@ function mkLinkRefD( ins_BLink, ins_SigShadow_out, ins_SigShadow_in,
         function ( t ) { return minusV( a, t, dtHist ); };
     return m.bind( v.newVar( new Maybe_Nothing().init() ),
         function ( vSig ) {
-    // PORT TODO: Figure out if 1 and {} are appropriate values here.
-    return m.bind( v.newVar( [ 1, {} ] ), function ( vObs ) {
-    // PORT TODO: Implement lrefOnLU so it only takes four non-ins
-    // arguments.
+    return m.bind( v.newVar( [ bigint( 1 ), dictEmpty() ] ),
+        function ( vObs ) {
     var onLU = lrefOnLU( s, ins_Vat, v, fdt, onSub, vSig, vObs );
     var onBL = lrefOnBL( s, ins_Vat, v, onSub, vSig, vObs );
     var blm =
@@ -1175,9 +1328,6 @@ function lrefOnLU(
             h.writeVar( vSig, new Maybe_Just().init( [ slc, tl ] ) ),
             m.bind( h.readVar( vObs ), function ( _AndOmap ) {
             var omap = _AndOmap[ 1 ];
-            // PORT TODO: Implement forM_ as forMDrop, and make sure
-            // we're passing the right monad instance here.
-            // PORT TODO: Implement M.elems as dictElems.
             return forMDrop( m, dictElems( omap ), function ( blr ) {
                 return m.bind( h.readVar( blr.getBl_state ),
                     function ( ixAndSdAndTd ) {
@@ -1224,20 +1374,15 @@ function lrefSubscribe(
         function ( ixAndSig ) {
         
         var ix = ixAndSig[ 0 ], sig = ixAndSig[ 1 ];
-        // PORT TODO: See if there's a better value to put here than
-        // 0.
-        return when( m,
-            ins_Signal.ins_SigTime.ins_Ord.ins_Eq.eq( ix, 0 ),
+        return when( m, ins_bigint_Eq.eq( ix, bigint( 0 ) ),
             m.bind( v.readVar( vObs ), function ( iNxtAndM ) {
                 var iNxt = iNxtAndM[ 0 ], m = iNxtAndM[ 1 ];
-                // PORT TODO: Implement M.insert as dictInsert.
-                var mPrime = dictInsert( iNxt, blr, m );
-                // PORT TODO: See if we should implement succ.
-                var iNxtPrime = 1 + iNxt;
+                var mPrime =
+                    dictInsert( ins_bigint_Ord, iNxt, blr, m );
+                var iNxtPrime = ins_bigint_Enum.succ( iNxt );
                 return m.then(
                     v.writeVar( blr.getBl_state(), [ iNxt, sig ] ),
                     m.then( v.writeVar( vObs, [ iNxtPrime, mPrime ] ),
-                        // PORT TODO: Implement M.null as dictNull.
                         when( m, dictNull( m ),
                             ins_Vat.eventually( onSub( true ) )
                         ) ) );
@@ -1254,19 +1399,13 @@ function lrefUnsubscribe(
         function ( ixAndSig ) {
         
         var ix = ixAndSig[ 0 ], sig = ixAndSig[ 1 ];
-        // PORT TODO: See if there's any point to implementing (/=).
-        // PORT TODO: See if there's a better value to put here than
-        // 0.
-        return when( m,
-            !ins_Signal.ins_SigTime.ins_Ord.ins_Eq.eq( ix, 0 ),
+        return when( m, ins_bigint_Eq.neq( ix, bigint( 0 ) ),
             m.then( v.writeVar( blr.getBl_state(), [ 0, sig ] ),
                 m.bind( v.readVar( vObs ), function ( iNxtAndM ) {
                     var iNxt = iNxtAndM[ 0 ], m = iNxtAndM[ 1 ];
-                    // PORT TODO: Implement M.delete as dictDelete.
-                    var mPrime = dictDelete( ix, m );
+                    var mPrime = dictDelete( ins_bigint_Ord, ix, m );
                     return m.then(
                         v.writeVar( vObs, [ iNxt, mPrime ] ),
-                        // PORT TODO: Implement M.null as dictNull.
                         when( m, dictNull( mPrime ),
                             ins_Vat.eventually( onSub( false ) )
                         ) );
@@ -1282,119 +1421,85 @@ function tmin( ins_Ord, x, y ) {
 
 
 
-// TODO: Port RDPIO/Queue.lhs, below.
-/*
+// RDPIO/Queue.lhs
 
--- the choice of RDPIO's task queue...
---  a rather thin indirection to Data.Sequence, for now.
-module RDP.RDPIO.Queue 
-    ( Queue
-    , nullQ
-    , emptyQ
-    , runQ
-    , pushQ
-    , singleQ 
-    ) where
+function Queue_Q() {}
+Queue_Q.prototype.init = function ( q ) {
+    this.q = q;
+    return this;
+};
 
-import qualified Data.Sequence as S
-import qualified Data.Foldable as F
+function nullQ( q ) {
+    return seqNull( q.q );
+}
 
-newtype Queue a = Q (S.Seq a)
+function emptyQ() {
+    return new Queue_Q().init( seqEmpty() );
+}
 
-nullQ :: Queue a -> Bool
-nullQ (Q q) = S.null q
+function runQ( ins_Monad, q ) {
+    return q.q.sequenceDrop( ins_Monad );
+}
 
-emptyQ :: Queue a
-emptyQ = Q S.empty
+function pushQ( op, q ) {
+    return new Queue_Q().init( seqPush( q.q, op ) );
+};
 
-runQ :: (Monad m) => Queue (m ()) -> m ()
-runQ (Q q) = F.sequence_ q
-
-pushQ :: a -> Queue a -> Queue a
-pushQ op (Q q) = Q (q S.|> op)
-
-singleQ :: a -> Queue a
-singleQ = Q . S.singleton
-
-*/
-
-// TODO: Port RDPIO/CSched.lhs, below.
-/*
-
-module RDP.RDPIO.CSched 
-    ( CSched(..)
-    ) where
-
--- | Clocked Scheduler (as a set of capabilities)
---
--- A clock has a set of registrations: time never advances past the
--- earliest registered instant.
---
--- A clock also has a set of scheduled events to run at certain
--- times in the future. These events run in an unspecified thread,
--- and may be constrained in type.
-data CSched m time uid event = CSched
-    { cs_time    :: m time         -- logical time for scheduler
-    , cs_time_x  :: uid -> m time  -- maximum bound time for vat
-
-    -- Schedule an event to be executed during or after given time
-    -- is logically available (according to cs_time)
-    , cs_schedule :: event -> time -> m ()
-
-    -- atomically register a new vat based on current time. Takes a 
-    -- function to choose a registration time based on current time. 
-    -- returns (tNow,tReg); tReg is given function of tNow.
-    , cs_reg_new :: uid -> (time -> time) -> m (time,time) 
-
-    -- add a registration to the clock. The caller, in this case,
-    -- must already be registered for an earlier time. This is 
-    -- usually used for registering a different vat.
-    , cs_reg_add :: uid -> time -> m ()
-
-    -- update an existing registry while removing an old one.
-    -- requires monotonic time, i.e. that the upd is greater than 
-    -- at least one of the cleared times (might assert in debug).
-    , cs_reg_upd :: uid -> time -> [time] -> m ()
-
-    -- clear the registry of a set of registered blocks.
-    , cs_reg_clr :: uid -> [time] -> m ()
-    }
-
-*/
-
-// TODO: Port RDPIO/Ref.lhs, below.
-/*
-
-module RDP.RDPIO.Ref
-    ( Ref
-    , newRef
-    , readRef
-    , writeRef
-    , modifyRef  -- 
-    , modifyRef' -- strictly modify a reference
-    ) where
-
-import Data.IORef
-
-newtype Ref a = Ref (IORef a)   -- a shared-memory reference
-
-newRef :: a -> IO (Ref a)
-readRef :: (Ref a) -> IO a
-writeRef :: (Ref a) -> a -> IO ()
-modifyRef, modifyRef' :: (Ref a) -> (a -> (a,b)) -> IO b
--- note: modifyRef' will evaluate the update before returning.
+function singleQ( op ) {
+    return new Queue_Q().init( seqSingleton( op ) );
+}
 
 
-newRef s0 = newIORef s0 >>= return . Ref
-readRef (Ref r) = readIORef r
-writeRef (Ref r) = writeIORef r
-modifyRef (Ref r) = atomicModifyIORef r
-modifyRef' (Ref r) f = 
-    atomicModifyIORef r (dupfst . f) >>= \ (x,y) ->
-    x `seq` return y
-    where dupfst (x,y) = (x,(x,y))
 
-*/
+// RDPIO/CSched.lhs
+
+function CSched_CSched() {}
+CSched_CSched.prototype.init = function ( obj ) {
+    this.getCs_time = kfn( obj.cs_time );
+    this.getCs_time_x = kfn( obj.cs_time_x );
+    this.getCs_schedule = kfn( obj.cs_schedule );
+    this.getCs_reg_new = kfn( obj.cs_reg_new );
+    this.getCs_reg_add = kfn( obj.cs_reg_add );
+    this.getCs_reg_upd = kfn( obj.cs_reg_upd );
+    this.getCs_reg_clr = kfn( obj.cs_reg_clr );
+    return this;
+};
+
+
+
+// RDPIO/Ref.lhs
+
+function Ref_Ref() {}
+Ref_Ref.prototype.init = function ( ref ) {
+    this.ref = ref;
+    return this;
+};
+
+function newRef( s0 ) {
+    return ins_IO_Monad.bind( newIORef( s0 ), function ( ref ) {
+    return ins_IO_Monad.ret( new Ref_Ref().init( ref ) );
+    } );
+}
+
+function readRef( ref ) {
+    return readIORef( ref.ref );
+}
+
+function writeRef( ref, val ) {
+    return writeIORef( ref.ref, val );
+}
+
+function modifyRef( ref, f ) {
+    return atomicModifyIORef( ref.ref, f );
+}
+
+// PORT TODO: The point of modifyRefPrime seems to be to have an eager
+// alternatice to modifyRef, so we've just implemented it like this.
+// See if modifyRef should be lazy.
+function modifyRefPrime( ref, f ) {
+    return modifyRef( ref, f );
+};
+
 
 
 /*
