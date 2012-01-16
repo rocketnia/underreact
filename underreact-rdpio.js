@@ -1566,90 +1566,97 @@ function newCSchedIO( ins_Ord_uid, ins_Ord_t, ioT, dt2us ) {
     } );
 };
 
+function Clock_Clock() {}
+Clock_Clock.prototype.init = function ( obj ) {
+    this.getRegistry = kfn( obj.registry );
+    this.getSleepers = kfn( obj.sleepers );
+    this.getSetTimer = kfn( obj.setTimer );
+    this.getIoTime = kfn( obj.ioTime );
+    return this;
+};
+
+function newClock( ins_Ord_uid, ins_Ord_t, ioT, diffT ) {
+    var m = ins_IO_Monad;
+    // PORT TODO: The original used mfix here. See if this local
+    // variable is sufficient.
+    // PORT TODO: Implement emptyReg.
+    var thisClock = m.bind( newRef( emptyReg() ), function ( x ) {
+    // PORT TODO: Implement emptyQSleep.
+    return m.bind( newRef( emptyQSleep() ), function ( s ) {
+    return m.bind(
+        newTimer( ins_Ord_t, ioT, diffT,
+            wakeup( ins_Ord_uid, ins_Ord_t, thisClock ) ),
+        function ( tr ) {
+    return m.ret( new Clock_Clock().init( {
+        registry: x,
+        sleepers: s,
+        setTimer: tr,
+        ioTime: ioT
+    } ) );
+    } );
+    } );
+    } );
+    return thisClock;
+}
+
+function getClockTime( ins_Ord_uid, ins_Ord_t, clock ) {
+    return ins_IO_Monad.bind( clock.getIoTime(), function ( currT ) {
+    return getClockTimePrime( ins_Ord_uid, ins_Ord_t, clock, currT );
+    } );
+}
+
+function getClockTimePrime( ins_Ord_uid, ins_Ord_t, clock, maxT ) {
+    var m = ins_IO_Monad;
+    return m.bind( readRef( clock.getRegistry() ), function ( reg ) {
+        // PORT TODO: Implement registryTime.
+        var t = registryTime( ins_Ord_t, ins_Ord_uid, reg );
+        if ( t instanceof Maybe_Nothing )
+            return m.ret( [ maxT, false ] );
+        return m.ret( ins_Ord_t.lt( maxT, rt ) ? [ maxT, false ] :
+            [ rt, true ] );
+    } );
+}
+
+function getClockTimeX( ins_Ord_uid, ins_Ord_t, clock, ix ) {
+    var m = ins_IO_Monad;
+    return m.bind( clock.getIoTime(), function ( currT ) {
+        return getClockTimeXPrime(
+            ins_Ord_uid, ins_Ord_t, clock, ix, currT );
+    } );
+}
+
+function getClockTimeX( ins_Ord_uid, ins_Ord_t, clock, ix, maxT ) {
+    var m = ins_IO_Monad;
+    return m.bind( readRef( clock.getRegistry() ), function ( reg ) {
+        // PORT TODO: Implement registryTimeX.
+        var t = registryTime( ins_Ord_t, ins_Ord_uid, ix, reg );
+        if ( t instanceof Maybe_Nothing )
+            return m.ret( [ maxT, false ] );
+        return m.ret( ins_Ord_t.lt( maxT, rt ) ? [ maxT, false ] :
+            [ rt, true ] );
+    } );
+}
+
+function wakeup( ins_Ord_uid, ins_Ord_t, clock ) {
+    return function ( currT ) {
+        var m = ins_IO_Monad;
+        return m.bind(
+            getClockTimePrime( ins_Ord_uid, ins_Ord_t, clock, currT ),
+            function ( clockTAndBBounded ) {
+        var clockT = clockTAndBBounded[ 0 ];
+        var bBounded = clockTAndBBounded[ 1 ];
+        return m.then(
+            wakeupSleepers( ins_Ord_t, clock.getSleepers(), clockT ),
+            unless( bBounded )(
+                // PORT TODO: Implement resetTimer.
+                resetTimer( ins_Ord_uid, ins_Ord_t, clock ) ) );
+        } );
+    };
+}
+
 // PORT TODO: Port the following.
 /*
 type DT2US t = t -> t -> Int
-
-data Clock t uid = Clock 
-    { registry :: Ref (Reg t uid) -- registered activity (delays clock)
-    , sleepers :: Ref (QSleep t)  -- logical-time wakeup requests
-    , setTimer :: t -> IO ()      -- schedule wakeup event for time T
-    , ioTime   :: IO t            -- get wallclock time
-    -- , diffTime :: t -> t -> Integer -- time difference (a-b) in microseconds
-    }
-
--- generate a new logical clock.    
-newClock :: (Ord uid, Ord t) 
-         => IO t 
-         -> DT2US t 
-         -> IO (Clock t uid)
-newClock ioT diffT = mfix $ \ thisClock ->
-    newRef emptyReg >>= \ x ->
-    newRef emptyQSleep >>= \ s ->
-    newTimer ioT diffT (wakeup thisClock) >>= \ tr ->
-    return Clock 
-            { registry=x
-            , sleepers=s
-            , setTimer=tr
-            , ioTime=ioT
-            }
-
--- getClockTime: returns (clockTime,bBounded) 
---  current logical time for clock, and whether this time is bounded
---  by a straggling vat. Clock time is the lesser of wall-clock time
---  and straggler time. Wall-clock time is now passed as an argument
---  to getClockTime.
--- The ideal case is when wall-clock time is the limit.
-getClockTime :: (Ord uid, Ord t) 
-             => Clock t uid 
-             -> IO (t,Bool)
-getClockTime clock = ioTime clock >>= \ currT -> 
-                     getClockTime' clock currT
-
-getClockTime' :: (Ord uid, Ord t) 
-              => Clock t uid 
-              -> t 
-              -> IO (t,Bool)
-getClockTime' clock maxT = 
-    readRef (registry clock) >>= \ reg ->
-    case registryTime reg of
-      Nothing -> return (maxT,False)
-      Just rt -> return $! if(maxT < rt) 
-                            then (maxT,False) 
-                            else (rt,True)
-
--- getClockTimeX: returns (time,bBounded)
---  while ignoring a specified vat ID, which is convenient for
---  deciding how far a vat's time can be lept in spite of 
---  race conditions with remote vat registration.
-getClockTimeX :: (Ord uid, Ord t) 
-              => Clock t uid  
-              -> uid
-              -> IO (t,Bool)
-getClockTimeX clock ix = ioTime clock >>= \ currT ->
-                         getClockTimeX' clock ix currT
-
-getClockTimeX' :: (Ord uid, Ord t)
-               => Clock t uid 
-               ->  uid
-               -> t -> IO (t,Bool)
-getClockTimeX' clock ix maxT =
-    readRef (registry clock) >>= \ reg ->
-    case registryTimeX ix reg of 
-      Nothing -> return (maxT,False)
-      Just rt -> return $! if (maxT < rt) 
-                    then (maxT,False) 
-                    else (rt,True)
-
--- generic wakeup event.
-wakeup :: (Ord uid, Ord t)
-       => Clock t uid 
-       -> t 
-       -> IO ()
-wakeup clock currT =
-    getClockTime' clock currT >>= \ (clockT,bBounded) ->
-    wakeupSleepers (sleepers clock) clockT >>
-    unless bBounded (resetTimer clock)
 
 sleep :: (Ord t)
       => Clock t uid 
@@ -2368,7 +2375,7 @@ bsimplify = bsimplsub . bsimplify' . flip bseqlist Bfwd
 
 /*
 
-TODO: Port the following files:
+PORT TODO: Port the following files:
 
 RDPIO/Time.lhs
 RDPIO/Host.lhs
