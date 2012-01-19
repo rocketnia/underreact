@@ -175,6 +175,119 @@ function kfn( result ) {
 function fst( pair ) { return pair[ 0 ]; }
 function snd( pair ) { return pair[ 1 ]; }
 
+function IORef() {}
+IORef.prototype.init = function ( val ) {
+    this.val = val;
+    return this;
+};
+
+function newIORef( val ) {
+    return io( function () {
+        return new IORef().init( val );
+    } );
+}
+
+function readIORef( ref ) {
+    return io( function () {
+        return ref.val;
+    } );
+}
+
+function writeIORef( ref, val ) {
+    return io( function () {
+        ref.val = val;
+        return [];
+    } );
+}
+
+function atomicModifyIORef( ref, f ) {
+    return io( function () {
+        var valAndResult = f( ref.val );
+        var val = valAndResult[ 0 ], result = valAndResult[ 1 ];
+        ref.val = val;
+        return result;
+    } );
+}
+
+function MVar() {}
+MVar.prototype.initFull = function ( val ) {
+    this.hasVal = true;
+    this.val = val;
+    this.takeListeners_ = [];
+    this.putListeners_ = [];
+    return this;
+};
+MVar.prototype.initEmpty = function () {
+    this.initFull( null );
+    this.hasVal = false;
+    return this;
+};
+MVar.prototype.take = function ( sync, then ) {
+    if ( this.hasVal ) {
+        var val = this.val;
+        this.val = null, this.hasVal = false;
+        if ( this.putListeners_.length !== 0 )
+            setTimeout( this.putListeners_.shift(), 0 );
+        then( null, val );
+        return true;
+    }
+    if ( sync )
+        return false;
+    var self = this;
+    this.takeListeners_.push( function () {
+        self.take( sync, then );
+    } );
+    return false;
+};
+MVar.prototype.put = function ( val, sync, then ) {
+    if ( !this.hasVal ) {
+        this.val = val, this.hasVal = true;
+        if ( this.takeListeners_.length !== 0 )
+            setTimeout( this.putListeners_.shift(), 0 );
+        then( null );
+        return true;
+    }
+    if ( sync )
+        return false;
+    var self = this;
+    this.putListeners_.push( function () {
+        self.put( val, sync, then );
+    } );
+    return false;
+};
+
+function newMVar( val ) {
+    return io( function () {
+        return new MVar().initFull( val );
+    } );
+}
+
+function takeMVar( mvar ) {
+    return asyncIo( function ( sync, then ) {
+        return mvar.take( sync, then );
+    } );
+}
+
+function putMVar( mvar, val ) {
+    return asyncIo( function ( sync, then ) {
+        return mvar.put( val, sync, function ( e ) {
+            if ( e ) return void then( e );
+            then( null, [] );
+        } );
+    } );
+}
+
+function tryPutMVar( mvar, val ) {
+    return asyncIo( function ( sync, then ) {
+        if ( mvar.hasVal )
+            return then( null, false ), true;
+        return mvar.put( val, sync, function ( e ) {
+            if ( e ) return void then( e );
+            then( null, true );
+        } );
+    } );
+}
+
 function Chan() {}
 Chan.prototype.init = function () {
     this.elements_ = [];
@@ -208,37 +321,53 @@ function writeChan( chan, element ) {
     } );
 }
 
-function IORef() {}
-IORef.prototype.init = function ( val ) {
-    this.val = val;
+// PORT TODO: Make this work. This will probably involve redesigning
+// the IO type's concrete implementation. We will hopefully be able
+// to kill a thread that's in a threadDelay before its delay is up,
+// without having killThread finish before it's sure the thread has
+// stopped. This will mean returning a "break me" operation upon
+// operation start, one way or another.
+var globalThreadPool = [];
+function addThreadToGlobalThreadPool( threadId ) {
+    globalThreadPool.push( threadId );
+}
+function advanceGlobalThreadPool() {
+    // PORT TODO: This is pretty much gobbledygook, but it will
+    // probably be similar to the final thread-killing code. Write
+    // that code, and meanwhile, finish all the rest of
+    // advanceGlobalThreadPool() too.
+    var threadId = TODO;
+    var n = threadId.killedListeners.length;
+    if ( n !== 0 ) {
+        for ( var i = 0; i < n; i++ )
+            setTimeout( threadId.killedListeners[ i ], 0 );
+        threadId.io = threadId.killedListeners = null;
+        return;
+    }
+}
+
+function ThreadId() {}
+ThreadId.prototype.initAndRun = function ( io ) {
+    this.io = io;
+    this.killedListeners = [];
+    addThreadToGlobalThreadPool( this );
     return this;
 };
 
-function newIORef( val ) {
+function forkIO( branch ) {
     return io( function () {
-        return new IORef().init( val );
+        return new ThreadId().initAndRun( io );
     } );
 }
 
-function readIORef( ref ) {
-    return io( function () {
-        return ref.val;
-    } );
-}
-
-function writeIORef( ref, val ) {
-    return io( function () {
-        ref.val = val;
-        return [];
-    } );
-}
-
-function atomicModifyIORef( ref, f ) {
-    return io( function () {
-        var valAndResult = f( ref.val );
-        var val = valAndResult[ 0 ], result = valAndResult[ 1 ];
-        ref.val = val;
-        return result;
+function killThread( threadId ) {
+    return asyncIo( function ( sync, then ) {
+        if ( threadId.killedListeners === null )
+            return then( null, [] ), true;
+        threadId.killedListeners.push( function () {
+            then( null, [] );
+        } );
+        return false;
     } );
 }
 
@@ -1524,41 +1653,28 @@ function newCSchedIO( ins_Ord_uid, ins_Ord_t, ioT, dt2us ) {
     var ouid = ins_Ord_uid;
     var ot = ins_Ord_t;
     var m = ins_IO_Monad;
-    // PORT TODO: Make sure we implement newClock like this.
     return m.bind( newClock( ouid, ot, ioT, dt2us ),
         function ( clock ) {
     var cs = new CSched_CSched().init( {
         // PORT TODO: Implement liftM.
-        // PORT TODO: Make sure we implement getClockTime like this.
         cs_time: liftM( m, fst )( getClockTime( ouid, ot, clock ) ),
         cs_time_x: function ( uid ) {
             return liftM( m, fst )(
-                // PORT TODO: Make sure we implement getClockTimeX
-                // like this.
                 getClockTimeX( ouid, ot, clock, uid ) );
         },
         cs_schedule: function ( vSync, tWakeup ) {
-            // PORT TODO: Make sure we implement sleep like this.
             return sleep( ot, clock, vSync, tWakeup );
         },
         cs_reg_new: function ( ix, wdt ) {
-            // PORT TODO: Make sure we implement newActivity like
-            // this.
             return newActivity( ouid, ot, clock, ix, wdt );
         },
         cs_reg_add: function ( ix, t ) {
-            // PORT TODO: Make sure we implement addActivity like
-            // this.
             return addActivity( ouid, ot, clock, ix, t );
         },
         cs_reg_upd: function ( ix, tReg, ts ) {
-            // PORT TODO: Make sure we implement updActivity like
-            // this.
             return updActivity( ouid, ot, clock, ix, tReg, ts );
         },
         cs_reg_clr: function ( ix, ts ) {
-            // PORT TODO: Make sure we implement clrActivity like
-            // this.
             return clrActivity( ouid, ot, clock, ix, ts );
         }
     } );
@@ -1654,140 +1770,145 @@ function wakeup( ins_Ord_uid, ins_Ord_t, clock ) {
     };
 }
 
+function sleep( ins_Ord, clock, vSync, tWakeup ) {
+    function addSleeper( qs ) {
+        // PORT TODO: Implement gotoSleep.
+        var qsPrime = gotoSleep( tWakeup, vSync, gs );
+        // PORT TODO: Implement sleepersTime.
+        var bUpd = ins_Ord.ins_Eq.neq(
+            sleepersTime( qs ), sleepersTime( qsPrime ) );
+        return [ qsPrime, bUpd ];
+    }
+    ins_IO_Monad.bind(
+        modifyRefPrime( clock.getSleepers(), addSleeper ),
+        function ( bReset ) {
+        
+        return when( bReset )( clock.getSetTimer()( tWakeup ) )
+    } );
+}
+
+function wakeupNow( ins_Ord_uid, ins_Ord_t, clock ) {
+    return ins_IO_Monad.bind( clock.getIoTime(), function ( tNow ) {
+        return wakeup( ins_Ord_uid, ins_Ord_t, clock )( tNow );
+    } );
+}
+
+function resetTimer( ins_Ord_uid, ins_Ord_t, clock ) {
+    return ins_IO_Monad.bind( readRef( clock.getSleepers() ),
+        function ( s ) {
+    // PORT TODO: Implement sleepersTime.
+    var nextT = sleepersTime( s );
+    if ( nextT instanceof Maybe_Nothing )
+        return ins_IO_Monad.ret( [] );
+    // PORT TODO: Implement setTimer.
+    return setTimer( clock, nextT.just );
+    } );
+}
+
+function newActivity( ins_Ord_uid, ins_Ord_t, clock, ix, wdt ) {
+    return ins_IO_Monad.bind( clock.getIoTime(), function ( currT ) {
+    return modifyRef( clock.getRegistry(), ins( currT ) );
+    function ins( tCurr ) {
+        return function ( s ) {
+            // PORT TODO: Implement registryTimeX.
+            var tLimit =
+                registryTimeX( ins_Ord_t, ins_Ord_uid, ix, s );
+            var tClock = maybe( tCurr, function ( t ) {
+                return ins_Ord_t.min( tCurr, t );
+            } )( tLimit );
+            var tReg = wdt( tClock );
+            // PORT TODO: Implement addReg.
+            var sPrime =
+                addReg( ins_Ord_t, ins_Ord_uid, ix, tReg, s );
+            return [ sPrime, [ tClock, tReg ] ];
+        };
+    }
+    } );
+}
+
+function addActivity( ins_Ord_uid, ins_Ord_t, clock, ix, t ) {
+    return modifyRef( clock.getRegistry(), ins );
+    function ins( s ) {
+        // PORT TODO: Implement addReg.
+        var sPrime = addReg( ins_Ord_t, ins_Ord_uid, ix, t, s );
+        return [ sPrime, [] ];
+    }
+}
+
+function clrActivity( ins_Ord_uid, ins_Ord_t, clock, ix, ts ) {
+    if ( ts instanceof List_Nil )
+        return [];
+    return ins_IO_Monad.bind( modifyRef( clock.getRegistry(), del ),
+        function ( bUpd ) {
+    return when( bUpd )( wakeupNow( ins_Ord_uid, ins_Ord_t, clock ) );
+    } );
+    function del( s ) {
+        // PORT TODO: Implement delRegList.
+        var sPrime = delRegList( ins_Ord_t, ins_Ord_uid, ix, ts, s );
+        // PORT TODO: Implement registryTime.
+        var bUpd = ins_Ord_t.ins_Eq.neq(
+            registryTime( ins_Ord_t, ins_Ord_uid, s ),
+            registryTime( ins_Ord_t, ins_Ord_uid, sPrime ) );
+        return [ sPrime, bUpd ];
+    }
+}
+
+function updActivity( ins_Ord_uid, ins_Ord_t, clock, ix, tReg, ts ) {
+    return ins_IO_Monad.bind( modifyRef( clock.getRegistry(), upd ),
+        function ( bUpd ) {
+    return when( bUpd )( wakeupNow( ins_Ord_uid, ins_Ord_t, clock ) );
+    } );
+    function upd( s ) {
+        // PORT TODO: Implement updReg.
+        var sPrime =
+            updReg( ins_Ord_t, ins_Ord_uid, ix, tReg, ts, s );
+        // PORT TODO: Implement registryTime.
+        var bUpd = ins_Ord_t.ins_Eq.neq(
+            registryTime( ins_Ord_t, ins_Ord_uid, s ),
+            registryTime( ins_Ord_t, ins_Ord_uid, sPrime ) );
+        return [ sPrime, bUpd ];
+    }
+}
+
+function newTimer( ins_Ord_t, ioT, diffT, alert ) {
+    return ins_IO_Monad.bind( newMVar( [] ), function ( mx ) {
+    return ins_IO_Monad.bind( newRef( new Maybe_Nothing().init() ),
+        function ( st ) {
+    return ins_IO_Monad.ret(
+        setTimerPrime( ins_Ord_t, ioT, diffT, alert, mx, st ) );
+    } );
+    } );
+}
+
+function setTimerPrime( ins_Ord_t, ioT, diffT, alert, mx, st ) {
+    return function ( t ) {
+        var m = ins_IO_Monad;
+        
+        var reset = m.bind( readRef( st ), function ( s0 ) {
+            if ( s0 instanceof Maybe_Nothing )
+                return forkTimerThread;
+            var t0 = s0.just[ 0 ], i0 = s0.just[ 1 ];
+            return when( ins_Ord_t.lt( t, t0 ) )(
+                m.then( killThread( i0 ), forkTimerThread ) );
+        } );
+        
+        var forkTimerThread = m.bind(
+            // PORT TODO: Implement timerThread.
+            forkIO( timerThread(
+                ins_Ord_t, ioT, diffT, alert, mx, st, t ) ),
+            function ( i ) {
+                return writeRef( st,
+                    [ new Maybe_Just().init( [ t, i ] ) ] );
+            } );
+        
+        return m.then(
+            takeMVar( mx ), m.then( reset, putMVar( mx, [] ) ) );
+    };
+}
+
 // PORT TODO: Port the following.
 /*
 type DT2US t = t -> t -> Int
-
-sleep :: (Ord t)
-      => Clock t uid 
-      -> MVar () 
-      -> t 
-      -> IO ()
-sleep clock vSync tWakeup  =
-    vSync `seq` tWakeup `seq`  
-    modifyRef' (sleepers clock) addSleeper >>= \ bReset ->
-    when bReset (setTimer clock tWakeup)
-    where addSleeper qs = 
-            let qs' = gotoSleep tWakeup vSync qs
-                bUpd = (sleepersTime qs) /= (sleepersTime qs')
-             in (qs',bUpd)
-
-wakeupNow :: (Ord uid, Ord t) => Clock t uid -> IO ()
-wakeupNow clock = 
-    ioTime clock >>= \ tNow -> 
-    wakeup clock tNow
-
--- set clock to wake the next sleeper. 
-resetTimer :: (Ord uid, Ord t) => Clock t uid -> IO ()
-resetTimer clock = 
-    readRef (sleepers clock) >>= \ s ->
-    case sleepersTime s of
-      Nothing -> return ()
-      Just nextT  -> setTimer clock nextT
-
-
--- newActivity is used to 'secure' the clock against advancing too
--- far. This is called every time a sleeping vat wakes up. Note that
--- newActivity treats the caller vat as if it were unregistered, for 
--- purpose of deciding the target registration time.
---   Inputs: ID of vat being registered
---           protection difference (added to clock time)
---           clock
---   Outputs: (clock time, protected time).
-newActivity :: (Ord uid, Ord t) => Clock t uid -> uid -> (t -> t) -> IO (t,t)
-newActivity clock ix wdt  =
-    ix `seq`
-    ioTime clock >>= \ currT ->
-    modifyRef (registry clock) (ins currT) 
-    where ins tCurr s = 
-            let tLimit = (registryTimeX ix s)
-                tClock = maybe tCurr (min tCurr) tLimit
-                tReg   = wdt tClock
-                s'     = addReg ix tReg s
-             in (s',(tClock,tReg))
-
--- addActivity must be called from an already active vat, for a time 
--- greater than or equal to its prior activity. Violation of this
--- would allow a vat to fall further behind than its configured drift.
-addActivity :: (Ord uid, Ord t) => Clock t uid -> uid -> t -> IO ()
-addActivity clock ix t = 
-    ix `seq` t `seq`
-    modifyRef (registry clock) ins
-    where ins s = let s' = addReg ix t s
-                   in (s',())
-
--- clear activities. If the cleared vat was a straggler, this
--- might cause other vats to wake up. 
-clrActivity :: (Ord uid, Ord t) => Clock t uid -> uid -> [t] -> IO ()
-clrActivity _ _ [] = return ()
-clrActivity clock ix ts =
-    modifyRef (registry clock) del >>= \ bUpd ->
-    when bUpd (wakeupNow clock)
-    where del s = let s' = delRegList ix ts s
-                      bUpd = (registryTime s) /= (registryTime s')
-                   in (s',bUpd)
-
--- Atomically reset the activity of an already active vat,
--- similar to addActivity and clearActivity but in one step.
--- Consistency requires that the vat already be registered. 
-updActivity :: (Ord uid, Ord t) => Clock t uid -> uid -> t -> [t] -> IO ()
-updActivity clock ix tReg ts =
-    ix `seq` tReg `seq`
-    modifyRef (registry clock) upd >>= \ bUpd ->
-    when bUpd (wakeupNow clock)
-    where upd s = let s'   = updReg ix tReg ts s
-                      bUpd = (registryTime s) /= (registryTime s')
-                   in (s',bUpd)
-
-------------------------------------------------------------
--- A Timer is defined to execute a specific event, and may
--- be scheduled for one future time. A timer may be rescheduled,
--- but only to an earlier moment. A timer will execute once
--- after being scheduled, with a best effort to run at the
--- time it was scheduled. After running, the timer must be
--- explicitly reset.
---
--- Goal is precision and minimum of overhead.
-------------------------------------------------------------
-
--- create a new timer object
-newTimer :: (Ord t) 
-         => IO t                -- get current time
-         -> DT2US t -- difftime in microseconds
-         -> (t -> IO ())        -- on alert action
-         -> IO (t -> IO ())     -- capability to set alert
-newTimer ioT diffT alert =
-    newMVar ()     >>= \ mx ->
-    newRef Nothing >>= \ st -> 
-    return (setTimer' ioT diffT alert mx st)
-
--- request the timer to execute near a given wall-clock time.
--- currently using MVar based lock. 
-setTimer' :: (Ord t)
-          => IO t
-          -> DT2US t
-          -> (t -> IO ())
-          -> MVar ()
-          -> Ref (Maybe (t,ThreadId))
-          -> (t -> IO ()) 
-setTimer' ioT diffT alert mx st t = 
-    t `seq` 
-    takeMVar mx >>
-    reset >>
-    putMVar mx ()
-    where reset =
-            readRef st >>= \ s0 ->
-            case s0 of
-              Nothing -> 
-                forkTimerThread 
-              Just (t0,i0) ->
-                -- only set timer if setting to earlier time
-                when (t < t0) $ 
-                  killThread i0 >>
-                  forkTimerThread
-          forkTimerThread = 
-            forkIO (timerThread ioT diffT alert mx st t) >>= \ i -> 
-            writeRef st (Just (t,i)) 
 
 
 -- wait until a specific time, then execute the event.
