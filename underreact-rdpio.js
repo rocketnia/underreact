@@ -433,6 +433,14 @@ function map( f ) {
     return result;
 }
 
+function liftM( ins_Monad, f ) {
+    return function ( getInput ) {
+        return ins_Monad.bind( getInput, function ( input ) {
+        return ins_Monad.ret( f( input ) );
+        } );
+    };
+}
+
 function forMDrop( ins_Monad, inputs, f ) {
     if ( inputs instanceof List_Nil )
         return ins_Monad.ret( [] );
@@ -1656,7 +1664,6 @@ function newCSchedIO( ins_Ord_uid, ins_Ord_t, ioT, dt2us ) {
     return m.bind( newClock( ouid, ot, ioT, dt2us ),
         function ( clock ) {
     var cs = new CSched_CSched().init( {
-        // PORT TODO: Implement liftM.
         cs_time: liftM( m, fst )( getClockTime( ouid, ot, clock ) ),
         cs_time_x: function ( uid ) {
             return liftM( m, fst )(
@@ -1695,10 +1702,11 @@ function newClock( ins_Ord_uid, ins_Ord_t, ioT, diffT ) {
     var m = ins_IO_Monad;
     // PORT TODO: The original used mfix here. See if this local
     // variable is sufficient.
-    // PORT TODO: Implement emptyReg.
-    var thisClock = m.bind( newRef( emptyReg() ), function ( x ) {
-    // PORT TODO: Implement emptyQSleep.
-    return m.bind( newRef( emptyQSleep() ), function ( s ) {
+    var thisClock = m.bind(
+        newRef( emptyReg( ins_Ord_t, ins_Ord_uid ) ),
+        function ( x ) {
+    return m.bind( newRef( emptyQSleep( ins_Ord_t ) ),
+        function ( s ) {
     return m.bind(
         newTimer( ins_Ord_t, ioT, diffT,
             wakeup( ins_Ord_uid, ins_Ord_t, thisClock ) ),
@@ -1724,7 +1732,6 @@ function getClockTime( ins_Ord_uid, ins_Ord_t, clock ) {
 function getClockTimePrime( ins_Ord_uid, ins_Ord_t, clock, maxT ) {
     var m = ins_IO_Monad;
     return m.bind( readRef( clock.getRegistry() ), function ( reg ) {
-        // PORT TODO: Implement registryTime.
         var t = registryTime( ins_Ord_t, ins_Ord_uid, reg );
         if ( t instanceof Maybe_Nothing )
             return m.ret( [ maxT, false ] );
@@ -1741,11 +1748,12 @@ function getClockTimeX( ins_Ord_uid, ins_Ord_t, clock, ix ) {
     } );
 }
 
-function getClockTimeX( ins_Ord_uid, ins_Ord_t, clock, ix, maxT ) {
+function getClockTimeXPrime(
+    ins_Ord_uid, ins_Ord_t, clock, ix, maxT ) {
+    
     var m = ins_IO_Monad;
     return m.bind( readRef( clock.getRegistry() ), function ( reg ) {
-        // PORT TODO: Implement registryTimeX.
-        var t = registryTime( ins_Ord_t, ins_Ord_uid, ix, reg );
+        var t = registryTimeX( ins_Ord_t, ins_Ord_uid, ix, reg );
         if ( t instanceof Maybe_Nothing )
             return m.ret( [ maxT, false ] );
         return m.ret( ins_Ord_t.lt( maxT, rt ) ? [ maxT, false ] :
@@ -1764,19 +1772,17 @@ function wakeup( ins_Ord_uid, ins_Ord_t, clock ) {
         return m.then(
             wakeupSleepers( ins_Ord_t, clock.getSleepers(), clockT ),
             unless( bBounded )(
-                // PORT TODO: Implement resetTimer.
                 resetTimer( ins_Ord_uid, ins_Ord_t, clock ) ) );
         } );
     };
 }
 
-function sleep( ins_Ord, clock, vSync, tWakeup ) {
+function sleep( ins_Ord_t, clock, vSync, tWakeup ) {
     function addSleeper( qs ) {
-        // PORT TODO: Implement gotoSleep.
-        var qsPrime = gotoSleep( tWakeup, vSync, gs );
-        // PORT TODO: Implement sleepersTime.
-        var bUpd = ins_Ord.ins_Eq.neq(
-            sleepersTime( qs ), sleepersTime( qsPrime ) );
+        var qsPrime = gotoSleep( ins_Ord_t, tWakeup, vSync )( qs );
+        var bUpd = ins_Ord_t.ins_Eq.neq(
+            sleepersTime( ins_Ord_t, qs ),
+            sleepersTime( ins_Ord_t, qsPrime ) );
         return [ qsPrime, bUpd ];
     }
     ins_IO_Monad.bind(
@@ -1796,12 +1802,10 @@ function wakeupNow( ins_Ord_uid, ins_Ord_t, clock ) {
 function resetTimer( ins_Ord_uid, ins_Ord_t, clock ) {
     return ins_IO_Monad.bind( readRef( clock.getSleepers() ),
         function ( s ) {
-    // PORT TODO: Implement sleepersTime.
-    var nextT = sleepersTime( s );
+    var nextT = sleepersTime( ins_Ord_t, s );
     if ( nextT instanceof Maybe_Nothing )
         return ins_IO_Monad.ret( [] );
-    // PORT TODO: Implement setTimer.
-    return setTimer( clock, nextT.just );
+    return clock.getSetTimer()( nextT.just );
     } );
 }
 
@@ -1810,14 +1814,12 @@ function newActivity( ins_Ord_uid, ins_Ord_t, clock, ix, wdt ) {
     return modifyRef( clock.getRegistry(), ins( currT ) );
     function ins( tCurr ) {
         return function ( s ) {
-            // PORT TODO: Implement registryTimeX.
             var tLimit =
                 registryTimeX( ins_Ord_t, ins_Ord_uid, ix, s );
             var tClock = maybe( tCurr, function ( t ) {
                 return ins_Ord_t.min( tCurr, t );
             } )( tLimit );
             var tReg = wdt( tClock );
-            // PORT TODO: Implement addReg.
             var sPrime =
                 addReg( ins_Ord_t, ins_Ord_uid, ix, tReg, s );
             return [ sPrime, [ tClock, tReg ] ];
@@ -1829,7 +1831,6 @@ function newActivity( ins_Ord_uid, ins_Ord_t, clock, ix, wdt ) {
 function addActivity( ins_Ord_uid, ins_Ord_t, clock, ix, t ) {
     return modifyRef( clock.getRegistry(), ins );
     function ins( s ) {
-        // PORT TODO: Implement addReg.
         var sPrime = addReg( ins_Ord_t, ins_Ord_uid, ix, t, s );
         return [ sPrime, [] ];
     }
@@ -1843,9 +1844,7 @@ function clrActivity( ins_Ord_uid, ins_Ord_t, clock, ix, ts ) {
     return when( bUpd )( wakeupNow( ins_Ord_uid, ins_Ord_t, clock ) );
     } );
     function del( s ) {
-        // PORT TODO: Implement delRegList.
         var sPrime = delRegList( ins_Ord_t, ins_Ord_uid, ix, ts, s );
-        // PORT TODO: Implement registryTime.
         var bUpd = ins_Ord_t.ins_Eq.neq(
             registryTime( ins_Ord_t, ins_Ord_uid, s ),
             registryTime( ins_Ord_t, ins_Ord_uid, sPrime ) );
@@ -1859,10 +1858,8 @@ function updActivity( ins_Ord_uid, ins_Ord_t, clock, ix, tReg, ts ) {
     return when( bUpd )( wakeupNow( ins_Ord_uid, ins_Ord_t, clock ) );
     } );
     function upd( s ) {
-        // PORT TODO: Implement updReg.
         var sPrime =
             updReg( ins_Ord_t, ins_Ord_uid, ix, tReg, ts, s );
-        // PORT TODO: Implement registryTime.
         var bUpd = ins_Ord_t.ins_Eq.neq(
             registryTime( ins_Ord_t, ins_Ord_uid, s ),
             registryTime( ins_Ord_t, ins_Ord_uid, sPrime ) );
@@ -1893,7 +1890,6 @@ function setTimerPrime( ins_Ord_t, ioT, diffT, alert, mx, st ) {
         } );
         
         var forkTimerThread = m.bind(
-            // PORT TODO: Implement timerThread.
             forkIO( timerThread(
                 ins_Ord_t, ioT, diffT, alert, mx, st, t ) ),
             function ( i ) {
@@ -1906,7 +1902,6 @@ function setTimerPrime( ins_Ord_t, ioT, diffT, alert, mx, st ) {
     };
 }
 
-// PORT TODO: Figure out whether this is the signature we use.
 function timerThread( ins_Ord_t, ioT, diffT, alert, mx, ss, tt ) {
     var m = ins_IO_Monad;
     return m.bind( waitUntil( ins_Ord_t, ioT, diffT, tt ),
@@ -1953,7 +1948,6 @@ function waitUntil( ins_Ord_t, ioT, diffT, tTarget ) {
     } );
 }
 
-// PORT TODO: Figure out whether this is the signature we use.
 // PORT TODO: See if we really need to pass these instances. They
 // combine as (t,uid) to form the set's own ordering, using the (,)
 // instance of Ord.
@@ -1962,7 +1956,6 @@ function emptyReg( ins_Ord_t, ins_Ord_uid ) {
     return bagEmpty();
 }
 
-// PORT TODO: Figure out whether this is the signature we use.
 function registryTime( ins_Ord_t, ins_Ord_uid, rg ) {
     // PORT TODO: Implement S.null as bagNull.
     if ( bagNull( rg ) )
@@ -1971,7 +1964,6 @@ function registryTime( ins_Ord_t, ins_Ord_uid, rg ) {
     return new Maybe_Just().init( fst( bagFindMin( rg ) ) );
 }
 
-// PORT TODO: Figure out whether this is the signature we use.
 function registryTimeX( ins_Ord_t, ins_Ord_uid, ix, rg ) {
     // PORT TODO: Implement S.null as bagNull.
     if ( bagNull( rg ) )
@@ -1987,36 +1979,28 @@ function registryTimeX( ins_Ord_t, ins_Ord_uid, ix, rg ) {
     return new Maybe_Just().init( tMin );
 }
 
-// PORT TODO: Figure out whether this is the signature we use.
 function addReg( ins_Ord_t, ins_Ord_uid, ix, tm, reg ) {
     // PORT TODO: Implement S.insert as bagInsert.
     return bagInsert( [ tm, ix ], reg );
 }
 
-// PORT TODO: Figure out whether this is the signature we use.
 function delReg( ins_Ord_t, ins_Ord_uid, ix, t, reg ) {
     // PORT TODO: Implement S.delete as bagDelete.
     return bagDelete( [ t, ix ], reg );
 }
 
-// PORT TODO: Figure out whether this is the signature we use.
 function delRegList( ins_Ord_t, ins_Ord_uid, ix, ts, reg ) {
     // PORT TODO: Implement foldl on List.
-    // PORT TODO: Implement delReg.
     return foldl( function ( a, b ) {
         return delReg( ins_Ord_t, ins_Ord_uid, ix, b, a );
     }, reg, ts );
 }
 
-// PORT TODO: Figure out whether this is the signature we use.
 function updReg( ins_Ord_t, ins_Ord_uid, ix, tAdd, tsDel, r ) {
-    // PORT TODO: Implement addReg.
-    // PORT TODO: Implement delRegList.
     return addReg( ins_Ord_t, ins_Ord_uid, ix, tAdd,
         delRegList( ins_Ord_t, ins_Ord_uid, ix, tsDel, r ) );
 }
 
-// PORT TODO: Figure out whether this is the signature we use.
 // PORT TODO: See if we really need to pass this instance. (We
 // probably will, so that the Map can sort itself... but on the other
 // hand we'll pass the map the instance to use each time anyway,
@@ -2025,7 +2009,6 @@ function emptyQSleep( ins_Ord_t ) {
     return dictEmpty();
 }
 
-// PORT TODO: Figure out whether this is the signature we use.
 function sleepersTime( ins_Ord_t, qs ) {
     if ( dictNull( qs ) )
         return new Maybe_Nothing().init();
@@ -2033,8 +2016,6 @@ function sleepersTime( ins_Ord_t, qs ) {
     return new Maybe_Just().init( fst( dictFindMin( qs ) ) );
 }
 
-// PORT TODO: Figure out whether this is the signature we use. It's
-// curried.
 function gotoSleep( ins_Ord_t, tm, e ) {
     // PORT TODO: Implement M.alter as dictAlter, and make sure it's
     // curried.
@@ -2046,7 +2027,6 @@ function gotoSleep( ins_Ord_t, tm, e ) {
     }
 }
 
-// PORT TODO: Figure out whether this is the signature we use.
 function wakeupSleepers( ins_Ord_t, qref, tm ) {
     var o = ins_IO_Monad;
     return o.bind( modifyRefPrime( qref, split ), function ( lAndM ) {
