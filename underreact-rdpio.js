@@ -1906,131 +1906,171 @@ function setTimerPrime( ins_Ord_t, ioT, diffT, alert, mx, st ) {
     };
 }
 
-// PORT TODO: Port the following.
-/*
-type DT2US t = t -> t -> Int
+// PORT TODO: Figure out whether this is the signature we use.
+function timerThread( ins_Ord_t, ioT, diffT, alert, mx, ss, tt ) {
+    var m = ins_IO_Monad;
+    return m.bind( waitUntil( ins_Ord_t, ioT, diffT, tt ),
+        function ( tf ) {
+    // PORT TODO: Implement myThreadId.
+    return m.bind( myThreadId(), function ( i ) {
+    return m.then( takeMVar( mx ),
+    m.bind( readRef( st ), function ( s0 ) {
+    if ( isTimerThread( i, s0 ) )
+        return m.then( writeRef( st, new Maybe_Nothing().init() ),
+        m.then( putMVar( mx, [] ),
+        alert( tf )
+        )
+        );
+    else
+        return putMVar( mx, [] );
+    } )
+    );
+    } );
+    } );
+    function isTimerThread( i, ix ) {
+        if ( ix instanceof Maybe_Nothing )
+            return false;
+        // PORT TODO: Implement ins_ThreadId_Eq.
+        return ins_ThreadId_Eq.eq( i, ix.just[ 1 ] );
+    }
+}
 
+// PORT TODO: Figure out whether this is the signature we use.
+function waitUntil( ins_Ord_t, ioT, diffT, tTarget ) {
+    // PORT TODO: Implement Int as fixnum.
+    var d0 = fixnum( 50 );
+    return ins_IO_Monad.bind( ioT, function ( tNow ) {
+    if ( ins_Ord_t.lt( tNow, tTarget ) )
+        return ins_IO_Monad.bind(
+            // PORT TODO: Implement threadDelay.
+            // PORT TODO: Implement (+) as plus.
+            threadDelay( plus( d0, diffT( tTarget, tNow ) ) ),
+            function ( _ ) {
+        return waitUntil( ins_Ord_t, ioT, diffT, tTarget );
+        } );
+    else
+        return ins_IO_Monad.ret( tNow );
+    } );
+}
 
--- wait until a specific time, then execute the event.
-timerThread :: (Ord t) 
-            => IO t 
-            -> DT2US t
-            -> (t -> IO ())
-            -> MVar ()
-            -> Ref (Maybe (t,ThreadId))
-            -> t
-            -> IO ()
-timerThread ioT diffT alert mx st tt =
-    waitUntil ioT diffT tt >>= \ tf ->
-    myThreadId >>= \ i ->
-    takeMVar mx  >>
-    readRef st >>= \ s0 ->
-    if isTimerThread i s0
-        then writeRef st Nothing >>
-             putMVar mx () >>
-             alert tf
-        else putMVar mx ()
-    where isTimerThread _ Nothing = False
-          isTimerThread i (Just (_,ix)) = (i == ix)
+// PORT TODO: Figure out whether this is the signature we use.
+// PORT TODO: See if we really need to pass these instances. They
+// combine as (t,uid) to form the set's own ordering, using the (,)
+// instance of Ord.
+function emptyReg( ins_Ord_t, ins_Ord_uid ) {
+    // PORT TODO: Implement S.empty as bagEmpty.
+    return bagEmpty();
+}
 
--- wait until a certain time is reached or breached. return time.
-waitUntil :: (Ord t)
-          => IO t
-          -> DT2US t
-          -> t 
-          -> IO t
-waitUntil ioT diffT tTarget =
-    ioT >>= \ tNow ->
-    if (tNow < tTarget)
-        then threadDelay (d0 + diffT tTarget tNow) >>= \ _ -> 
-             waitUntil ioT diffT tTarget
-        else return tNow
-    where d0 = 50 -- to avoid near-zero delays
+// PORT TODO: Figure out whether this is the signature we use.
+function registryTime( ins_Ord_t, ins_Ord_uid, rg ) {
+    // PORT TODO: Implement S.null as bagNull.
+    if ( bagNull( rg ) )
+        return new Maybe_Nothing().init();
+    // PORT TODO: Implement S.findMin as bagFindMin.
+    return new Maybe_Just().init( fst( bagFindMin( rg ) ) );
+}
 
------------------------------------------------------------
--- Registrations with Clock
---   The purpose of registrations is to track activity and
---   prevent logical time from advancing too far past the 
---   worst straggler. When an active vat updates an inactive
---   vat, the inactive vat will immediately be registered 
---   as a potential straggler to ensure it processes those
---   updates. In some cases, this could allow a vat to be
---   registered multiple times, so each vat will clear
---   unnecessary registrations. 
---
---   We need to know when dropping a registration also 
---   increases the registryTime. When that happens, we
---   can wake up sleeping vats. 
------------------------------------------------------------ 
-type Reg t uid = S.Set (t,uid)
+// PORT TODO: Figure out whether this is the signature we use.
+function registryTimeX( ins_Ord_t, ins_Ord_uid, ix, rg ) {
+    // PORT TODO: Implement S.null as bagNull.
+    if ( bagNull( rg ) )
+        return new Maybe_Nothing().init();
+    // PORT TODO: Implement S.deleteFindMin as bagDeleteFindMin.
+    var tMinAndIxMinAndRgPrime = bagDeleteFindMin( rg );
+    var tMin = tMinAndIxMinAndRgPrime[ 0 ][ 0 ];
+    var ixMin = tMinAndIxMinAndRgPrime[ 0 ][ 1 ];
+    var rgPrime = tMinAndIxMinAndRgPrime[ 1 ];
+    // PORT TODO: See if we should flatten this recursion.
+    if ( ins_Ord_uid.ins_Eq.eq( ix, ixMin ) )
+        return registryTimeX( ins_Ord_t, ins_Ord_uid, ix, rgPrime );
+    return new Maybe_Just().init( tMin );
+}
 
-emptyReg :: (Ord t, Ord uid) => Reg t uid
-emptyReg = S.empty
+// PORT TODO: Figure out whether this is the signature we use.
+function addReg( ins_Ord_t, ins_Ord_uid, ix, tm, reg ) {
+    // PORT TODO: Implement S.insert as bagInsert.
+    return bagInsert( [ tm, ix ], reg );
+}
 
--- find the worst straggler time
-registryTime :: (Ord t, Ord uid) => Reg t uid -> Maybe t
-registryTime rg = if(S.null rg) 
-                    then Nothing 
-                    else Just (fst (S.findMin rg))
+// PORT TODO: Figure out whether this is the signature we use.
+function delReg( ins_Ord_t, ins_Ord_uid, ix, t, reg ) {
+    // PORT TODO: Implement S.delete as bagDelete.
+    return bagDelete( [ t, ix ], reg );
+}
 
--- find the worst straggler time, ignoring a particular UID
-registryTimeX :: (Ord t, Ord uid) => uid -> Reg t uid -> Maybe t
-registryTimeX ix rg =
-    if(S.null rg) then Nothing
-    else let ((tMin,ixMin),rg') = S.deleteFindMin rg
-          in if(ix == ixMin) then registryTimeX ix rg'
-                             else Just tMin
+// PORT TODO: Figure out whether this is the signature we use.
+function delRegList( ins_Ord_t, ins_Ord_uid, ix, ts, reg ) {
+    // PORT TODO: Implement foldl on List.
+    // PORT TODO: Implement delReg.
+    return foldl( function ( a, b ) {
+        return delReg( ins_Ord_t, ins_Ord_uid, ix, b, a );
+    }, reg, ts );
+}
 
--- add an activity
-addReg :: (Ord t, Ord uid) => uid -> t -> Reg t uid -> Reg t uid
-addReg ix tm = ix `seq` tm `seq` S.insert (tm,ix)
+// PORT TODO: Figure out whether this is the signature we use.
+function updReg( ins_Ord_t, ins_Ord_uid, ix, tAdd, tsDel, r ) {
+    // PORT TODO: Implement addReg.
+    // PORT TODO: Implement delRegList.
+    return addReg( ins_Ord_t, ins_Ord_uid, ix, tAdd,
+        delRegList( ins_Ord_t, ins_Ord_uid, ix, tsDel, r ) );
+}
 
--- remove an activity.
-delReg :: (Ord t, Ord uid) => uid -> t -> Reg t uid -> Reg t uid
-delReg ix t = S.delete (t,ix)
+// PORT TODO: Figure out whether this is the signature we use.
+// PORT TODO: See if we really need to pass this instance. (We
+// probably will, so that the Map can sort itself... but on the other
+// hand we'll pass the map the instance to use each time anyway,
+// right?)
+function emptyQSleep( ins_Ord_t ) {
+    return dictEmpty();
+}
 
--- remove list of activities
-delRegList :: (Ord t, Ord uid) => uid -> [t] -> Reg t uid -> Reg t uid
-delRegList ix ts reg = foldl (flip $ delReg ix) reg ts
+// PORT TODO: Figure out whether this is the signature we use.
+function sleepersTime( ins_Ord_t, qs ) {
+    if ( dictNull( qs ) )
+        return new Maybe_Nothing().init();
+    // PORT TODO: Implement M.findMin as dictFindMin.
+    return new Maybe_Just().init( fst( dictFindMin( qs ) ) );
+}
 
--- update: add an activity while removing older list. The added 
--- activity will be registered even if it overlaps a removed element
-updReg :: (Ord t, Ord uid) => uid -> t -> [t] -> Reg t uid -> Reg t uid
-updReg ix tAdd tsDel r = addReg ix tAdd (delRegList ix tsDel r)
+// PORT TODO: Figure out whether this is the signature we use. It's
+// curried.
+function gotoSleep( ins_Ord_t, tm, e ) {
+    // PORT TODO: Implement M.alter as dictAlter, and make sure it's
+    // curried.
+    return dictAlter( pushVar, tm );
+    function pushVar( xs ) {
+        return new Maybe_Just().init( new List_Cons().init( e,
+            xs instanceof Maybe_Nothing ? new List_Nil().init() :
+                xs.just ) );
+    }
+}
 
------------------------------------------------------------
--- Sleepers -
---   A set of unit MVars to signal at given times (according
---   to the logical clock). 
-------------------------------------------------------------
-type QSleep t = M.Map t [MVar ()]
-
-emptyQSleep :: (Ord t) => QSleep t
-emptyQSleep = M.empty
-
-sleepersTime :: (Ord t) => QSleep t -> Maybe t
-sleepersTime qs = if(M.null qs) 
-                    then Nothing 
-                    else Just (fst (M.findMin qs))
-
--- add a sleeper, sorted in time. 
-gotoSleep :: (Ord t) => t -> MVar () -> QSleep t -> QSleep t
-gotoSleep tm e = M.alter pushVar tm
-    where pushVar Nothing   = Just (e:[])
-          pushVar (Just xs) = Just (e:xs)
-
--- atomically take a subset of sleepers through requested time.
--- wake them using tryPutMVar, from earliest time to latest
-wakeupSleepers :: (Ord t) => Ref (QSleep t) -> t -> IO ()
-wakeupSleepers qref tm = 
-    modifyRef' qref split >>= \ (l,m) ->
-    mapM_ wakeL (M.elems l) >>
-    maybe (return ()) wakeL m
-    where split q = let (l,m,r) = M.splitLookup tm q
-                     in (r, (l, m))
-          wake e = tryPutMVar e ()
-          wakeL  = mapM_ wake
-*/
+// PORT TODO: Figure out whether this is the signature we use.
+function wakeupSleepers( ins_Ord_t, qref, tm ) {
+    var o = ins_IO_Monad;
+    return o.bind( modifyRefPrime( qref, split ), function ( lAndM ) {
+    var l = lAndM[ 0 ], m = lAndM[ 1 ];
+    // PORT TODO: Implement mapM_ as mapMDrop.
+    return o.then( mapMDrop( o, wakeL, dictElems( l ) ),
+        maybe( o.ret( [] ), wakeL )( m ) );
+    } );
+    function split( q ) {
+        // PORT TODO: Implement M.splitLookup as dictSplitLookup.
+        var lAndMAndR = dictSplitLookup( tm, q );
+        var l = lAndMAndR[ 0 ];
+        var m = lAndMAndR[ 1 ];
+        var r = lAndMAndR[ 2 ];
+        return [ r, [ l, m ] ];
+    }
+    function wake( e ) {
+        return tryPutMVar( e, [] );
+    }
+    function wakeL( list ) {
+        // PORT TODO: Implement mapM_ as mapMDrop.
+        return mapMDrop( o, wake, list );
+    }
+}
 
 
 
