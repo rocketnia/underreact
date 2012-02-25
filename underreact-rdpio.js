@@ -861,7 +861,9 @@ var class_HasVar = makeClass( {
 
 
 
+// ===================================================================
 // Vat.lhs
+// ===================================================================
 
 var class_Vat = makeClass( {
     ins_Monad: null,
@@ -891,36 +893,6 @@ var class_ClockedVat = makeClass( {
     setMinCycle: null,
     getMinCycle: null
 } );
-
-function newChokedEvent(
-    ins_TimedVat, ins_HasVar, ins_Ord, cooldown, op ) {
-    
-    var m = ins_TimedVat.ins_Monad;
-    var c = ins_TimedVat.ins_HasClock;
-    return m.bind( op, c.getTime(), function ( tCreate ) {
-        return m.bind( ins_HasVar.newVar( [ tCreate, false ] ),
-            function ( st ) {
-            
-            var chokedOp = m.bind( ins_HasVar.readVar( st ),
-                function ( stVal ) {
-                
-                var tMin = stVal[ 0 ], bSched = stVal[ 1 ];
-                return m.bind( c.getTime(), function ( tNow ) {
-                    if ( ins_Ord.lt( tNow, tMin ) )
-                        return unless( m, bSched, m.then(
-                            ins_HasVar.writeVar( st, [ tMin, true ] ),
-                            ins_TimedVat.atTime( tMin, chokedOp ) ) );
-                    var tNext = ins_TimedVat.ins_AffineSpace.plusDiff(
-                        tNow, cooldown );
-                    return m.then(
-                        ins_HasVar.writeVar( st, [ tNext, false ] ),
-                        op );
-                } );
-            } );
-            return m.ret( chokedOp );
-        } );
-    } );
-}
 
 
 
@@ -1099,6 +1071,18 @@ function pip( ins_Callable, fxy, fyz, xAndZcb ) {
     return fxy( [ x, ycb ] );
 }
 
+function fpip( fxy, fyz, xAndZcb ) {
+    var x = xAndZcb[ 0 ], zcb = xAndZcb[ 1 ];
+    return fyz( [ fxy( x ), zcb ] );
+}
+
+function pipf( fxy, fyz, xAndZcb ) {
+    var x = xAndZcb[ 0 ], zcb = xAndZcb[ 1 ];
+    return fxy( [ x, function ( y ) {
+        return zcb( fyz( y ) );
+    } ] );
+}
+
 function tee( ins_Callable, fn ) {
     return function ( xAndXcb ) {
         var x = xAndXcb[ 0 ], xcb = xAndXcb[ 1 ];
@@ -1130,95 +1114,15 @@ var class_ChanCB = makeClass( {
 function callAndWait( ins_ChanCB, fn, x ) {
     var m = ins_IO_Monad;
     return m.bind( newChan(), function ( ch ) {
-    return m.bind( ins_ChanCB.mkcbChan( id, ch ), function ( chcb ) {
-        return m.then( call( ins_ChanCB.ins_Callable, fn, x, chcb ),
+    return m.bind( ins_ChanCB.mkcbChan( ch ), function ( cbch ) {
+        return m.then( call( ins_ChanCB.ins_Callable, fn, x, cbch ),
             readChan( ch ) );
     } );
     } );
 }
 
-var class_StepCB = makeClass( {
-    ins_Callable: null,
-    mkcbRedirect: null,
-    mkcbProc: function ( cbp0 ) {
-        var c = this.ins_Callable;
-        return c.ins_Monad.bind( this.mkcbRedirect(),
-            function ( curAndUpd ) {
-                var cur = curAndUpd[ 0 ], upd = curAndUpd[ 1 ];
-                var step0 = cbpStepper( c.ins_Monoid, upd, cbp0 );
-                return c.ins_Monad.then(
-                    c.call0( upd, step0 ), c.ins_Monad.ret( cur ) );
-            } );
-    }
-} );
-
-function cbpStepper( ins_Monoid, upd, cbp ) {
-    return function ( x ) {
-        var cbNowAndCbpPrime = cbp.runCBProc( x );
-        var cbNow = cbNowAndCbpPrime[ 0 ];
-        var cbpPrime = cbNowAndCbpPrime[ 1 ];
-        var next = cbpStepper( upd, cbpPrime );
-        return ins_Monoid.mappend( upd( next ), cbNow );
-    };
-}
-
-function CBProc_CBProc() {}
-CBProc_CBProc.prototype.init = function ( runCBProc ) {
-    this.runCBProc = function ( x ) {
-        return runCBProc( x );
-    };
-    return this;
-};
-
-function cbpAlways( fn ) {
-    var cbp = new CBProc_CBProc().init( function ( x ) {
-        return [ fn( x ), cbp ];
-    } );
-    return cbp;
-}
-
-function cbpNever( ins_Monoid ) {
-    return cbpAlways( kfn( ins_Monoid.mempty() ) );
-}
-
-function cbpCons( fn, getCbp ) {
-    return new CBProc_CBProc().init( function ( x ) {
-        return [ fn( x ), getCbp() ];
-    } );
-}
-
-function cbpFromList( ins_Monoid, list ) {
-    if ( list instanceof List_Nil )
-        return cbpNever( ins_Monoid );
-    var x = list.getCar(), xs = list.getCdr();
-    return cbpCons( x, function () { return cbpFromList( xs ); } );
-}
-
-function mkcbOnce0( ins_VatCB, ins_StepCB, op ) {
-    return ins_VatCB.ins_Callable.ins_Monad.bind(
-        ins_VatCB.mkcb0( op ), function ( fn ) {
-            return ins_StepCB.mkcbProc( cbpCons( fn, function () {
-                return cbpNever( ins_VatCB.ins_Callable.ins_Monoid );
-            } ) );
-        } );
-}
-
-function mkcbOnce( ins_VatCB, ins_StepCB, op ) {
-    return mkcbOnce0( ins_VatCB, ins_StepCB, function ( aAndBcb ) {
-        var a = aAndBcb[ 0 ], bcb = aAndBcb[ 1 ];
-        var c = ins_VatCB.ins_Callable;
-        return c.ins_Monad.bind( op( a ), function ( b ) {
-            return c.call0( bcb( b ) );
-        } );
-    } );
-}
-
 function method( ins_VatCB, op ) {
     return mkcb( ins_VatCB, op );
-}
-
-function monce( ins_VatCB, ins_StepCB, op ) {
-    return mkcbOnce( ins_VatCB, ins_StepCB, op );
 }
 
 
@@ -1240,10 +1144,10 @@ function lu_time( ins_Signal, linkUp ) {
     return ins_Maybe_Functor.fmap( fst )( linkUp.getLu_update() );
 }
 
-function luTerminate( ins_Signal, tmTerm ) {
-    var su = ins_Signal.s_future( tmTerm, ins_Signal.s_never() );
+function luTerminate( ins_Signal, tm ) {
     return new LinkUp_LinkUp.init(
-        new Maybe_Just().init( su ), new Maybe_Nothing().init() );
+        new Maybe_Just().init( [ tm, ins_Signal.s_never() ] ),
+        new Maybe_Nothing().init() );
 }
 
 var class_Link = makeClass( {
@@ -1267,9 +1171,9 @@ var class_BLink = makeClass( {
 } );
 
 // mkBLink_ ::
-//     (BLink v b u t, BProd b, SigShadow u s t, SigShadow s u t)
-//     => st -> ((BLRec t v st s ()) -> (LinkUp t s d) -> v ())
-//     -> v (b (s d) (s ()))
+//     (BLink v b u t, BProd b, SigShadow u s' t, SigShadow s' u t)
+//     => st -> ((BLRec t v st s' ()) -> (LinkUp t s d) -> v ())
+//     -> v (b (s d) (s' ()))
 function mkBLinkDrop( ins_BLink, ins_BProd,
     ins_SigShadow_out, ins_SigShadow_in, s0, cb ) {
     
@@ -2141,7 +2045,8 @@ data S u t a x y where
     -- Value Manipulations. 
     -- Sfmap comes with an extra string for `show`.
     Sfmap   :: (SigFun f s t) => String -> f x y -> S u t a (s x) (s y)
-    Sdrop   :: (SigShadow u s t, SigShadow s u t) => S u t a x (s ())
+    Sunit   :: S u t a x (u ())
+    Suconv  :: (SigShadow s u t, SigShadow u s t) => S u t a (u ()) (s ())
     Sconv   :: (SigShadow s' u t, SigLift s s' t) => S u t a (s x) (s' x)
 
     -- Value Composition (that require touching signals)
@@ -2389,39 +2294,34 @@ bsimplseq b@(Bseq (Bop (Sdelay dt)) (Bseq f r)) =
         then (Bseq f (bsimplseq (Bseq (Bop (Sdelay dt)) r)))
         else b
     -- distribute drop across a product or sum.
-bsimplseq (Bseq (Bofst f) (Bseq d@(Bop Sdrop) r)) =
-    let f' = (Bseq f (dupdrop d)) in
-    (Bseq (Bofst f') (Bseq (Bop Sdrop) r))
+bsimplseq (Bseq (Bofst f) (Bseq (Bop Sunit) r)) =
+    let f' = (Bseq f (Bop Sunit)) in
+    (Bseq (Bofst f') (Bseq (Bop Sunit) r))
 bsimplseq (Bseq (Bofst f) (Bseq Bswap
-          (Bseq (Bofst g) (Bseq d@(Bop Sdrop) r)))) =
-    let f' = (Bseq f (dupdrop d)) in
+          (Bseq (Bofst g) (Bseq (Bop Sunit) r)))) =
+    let f' = (Bseq f (Bop Sunit)) in
     (Bseq (Bofst f') (Bseq Bswap
-    (Bseq (Bofst g) (Bseq (Bop Sdrop) r))))
-bsimplseq (Bseq (Bolft f) (Bseq d@(Bop Sdrop) r)) =
-    let f' = (Bseq f (dupdrop d)) in
-    (Bseq (Bolft f') (Bseq (Bop Sdrop) r))
+    (Bseq (Bofst g) (Bseq (Bop Sunit) r))))
+bsimplseq (Bseq (Bolft f) (Bseq (Bop Sunit) r)) =
+    let f' = (Bseq f (Bop Sunit)) in
+    (Bseq (Bolft f') (Bseq (Bop Sunit) r))
 bsimplseq (Bseq (Bolft f) (Bseq Bmirr 
-          (Bseq (Bolft g) (Bseq d@(Bop Sdrop) r)))) =
-    let f' = (Bseq f (dupdrop d)) in
+          (Bseq (Bolft g) (Bseq (Bop Sunit) r)))) =
+    let f' = (Bseq f (Bop Sunit)) in
     (Bseq (Bolft f') (Bseq Bmirr
-    (Bseq (Bolft g) (Bseq (Bop Sdrop) r))))
+    (Bseq (Bolft g) (Bseq (Bop Sunit) r))))
     -- distribute drop across merge
-bsimplseq (Bseq (Bop Smerge) (Bseq d@(Bop Sdrop) r)) =
-    (Bseq (Bolft (dupdrop d)) (Bseq Bmirr
-    (Bseq (Bolft (dupdrop d)) (Bseq Bmirr
-    (Bseq (Bop Smerge) (Bseq (Bop Sdrop) r))))))
+bsimplseq (Bseq (Bop Smerge) (Bseq (Bop Sunit) r)) =
+    (Bseq (Bolft (Bop Sunit)) (Bseq Bmirr
+    (Bseq (Bolft (Bop Sunit)) (Bseq Bmirr
+    (Bseq (Bop Smerge) (Bseq (Bop Sunit) r))))))
     -- eliminate other droppable elements
-bsimplseq b@(Bseq f (Bseq (Bop Sdrop) r)) =
+bsimplseq b@(Bseq f (Bseq (Bop Sunit) r)) =
     if bdroppable f 
-        then (Bseq (Bop Sdrop) r) 
+        then (Bseq (Bop Sunit) r) 
         else b
     -- none of the above? call it simplified.
 bsimplseq b = b
-
--- dupdrop eliminates ambiguity in signal output type of the drop.
-dupdrop :: B (S u t a) x (s ()) -> B (S u t a) x' (s ())
-dupdrop (Bop Sdrop) = Bop Sdrop
-dupdrop _ = error "illegal dupdrop"
 
 
 -- Shiftable means delay can be shifted to after this action. This
@@ -2455,7 +2355,8 @@ bdroppable _ = False
 sshiftable (Sop m _) = not $ op_tsen m
 sshiftable (Sfmap _ _) = True
 sshiftable Sconv = True
-sshiftable Sdrop = True
+sshiftable Suconv = True
+sshiftable Sunit = True
 sshiftable Smerge = True
 sshiftable Sdisj = True
 sshiftable Sconj = True
@@ -2466,7 +2367,8 @@ sshiftable _ = False
 sdroppable (Sop m _) = op_query m
 sdroppable (Sfmap _ _) = True
 sdroppable Sconv = True
-sdroppable Sdrop = True
+sdroppable Suconv = True
+sdroppable Sunit = True
 sdroppable Sdup = True
 sdroppable Sdisj = True
 sdroppable Sconj = True
