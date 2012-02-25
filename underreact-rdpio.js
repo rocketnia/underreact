@@ -962,7 +962,7 @@ var class_BSig = makeClass( {
     bfmap: null,
     bunit: null,
     buconv: null,
-    bconv: null
+    bsconv: null
 } );
 
 // bdrop :: (BSig b u t, SigShadow s u t, SigShadow u s t)
@@ -1082,8 +1082,7 @@ var class_BPeek = makeClass( {
 
 var class_BDyn = makeClass( {
     ins_BSig: null,
-    ins_BProdBase: null,
-    ins_BSumBase: null,
+    ins_BJoin: null,
     beval: null,
     bexec: null
 } );
@@ -1990,15 +1989,15 @@ function delReg( ins_Ord_t, ins_Ord_uid, ix, t, reg ) {
 }
 
 function delRegList( ins_Ord_t, ins_Ord_uid, ix, ts, reg ) {
-    // PORT TODO: Implement foldl on List.
-    return foldl( function ( a, b ) {
+    // PORT TODO: Implement foldlPrime on List.
+    return foldlPrime( function ( a, b ) {
         return delReg( ins_Ord_t, ins_Ord_uid, ix, b, a );
     }, reg, ts );
 }
 
-function updReg( ins_Ord_t, ins_Ord_uid, ix, tAdd, tsDel, r ) {
+function updReg( ins_Ord_t, ins_Ord_uid, ix, tAdd, tsDel, reg ) {
     return addReg( ins_Ord_t, ins_Ord_uid, ix, tAdd,
-        delRegList( ins_Ord_t, ins_Ord_uid, ix, tsDel, r ) );
+        delRegList( ins_Ord_t, ins_Ord_uid, ix, tsDel, reg ) );
 }
 
 // PORT TODO: See if we really need to pass this instance. (We
@@ -2537,9 +2536,9 @@ DiscreteTimedSeq.lhs (header says DiscreteTimedSignal)
 SigDSeq.lhs
 SigD.lhs
 SigC.lhs
-Agent.lhs (RDAgent)
-BError.lhs
-BState.lhs (Trans.StateBehavior)
-BWriter.lhs (Trans.BWriter)
-BReader.lhs
+Agent.lhs
+Trans/Error.lhs
+Trans/State.lhs (Trans.StateBehavior)
+Trans/Writer.lhs (Trans.BWriter)
+Trans/Reader.lhs (Trans.BReader)
 */
