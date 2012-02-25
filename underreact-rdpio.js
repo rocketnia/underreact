@@ -1234,12 +1234,10 @@ LinkUp_LinkUp.prototype.init = function ( lu_update, lu_stable ) {
     return this;
 };
 
+// PORT TODO: See if we really need to pass this instance. It was used
+// when SigUp existed, but now our SigUp values are pairs instead.
 function lu_time( ins_Signal, linkUp ) {
-    return ins_Maybe_Functor.fmap( function ( lu_update ) {
-        // PORT TODO: Figure out what to do here now that su_time
-        // doesn't exist.
-        return ins_Signal.su_time( lu_update );
-    } )( linkUp.getLu_update() );
+    return ins_Maybe_Functor.fmap( fst )( linkUp.getLu_update() );
 }
 
 function luTerminate( ins_Signal, tmTerm ) {
@@ -2062,59 +2060,6 @@ import Data.AffineSpace
 import Data.AdditiveGroup
 import Control.Monad.Identity
 
--- Function types used in folds over maps.
-type BMapFn a a' x y = a x y -> a' x y
-type BMapMFn a a' m x y = a x y -> m (a' x y)
-type BFoldLFn u t l a x y = BD u t l x -> a x y -> BD u t l y
-type BFoldRFn u t l a x y = a x y -> BD u t l y -> BD u t l x
-type BFoldMLFn u t l a m x y = BD u t l x -> a x y -> m (BD u t l y)
-type BFoldMRFn u t l a m x y = a x y -> BD u t l y -> m (BD u t l x)
-type BFoldMapLFn u t l a a' x y = BD u t l x -> a x y -> (a' x y, BD u t l y)
-type BFoldMapRFn u t l a a' x y = a x y -> BD u t l y -> (BD u t l x, a' x y)
-type BFoldMapMLFn u t l a a' m x y = BD u t l x -> a x y -> m (a' x y, BD u t l y)
-type BFoldMapMRFn u t l a a' m x y = a x y -> BD u t l y -> m (BD u t l x, a' x y)
-
--- | some extra metadata to help with simplification
--- (so far just stuff from BLMeta)
-data OpMeta = OpMeta
-    { op_show :: String -- ^ string for debugging
-    , op_query :: Bool  -- ^ behavior is query, or otherwise safe to drop 
-    , op_tsen :: Bool   -- ^ behavior is time-sensitive, unsafe to time-shift
-    }
-
--- | Signal operations. 
--- Type `u` is a universal unit signal, and `t` is associated time.
--- Type `a` is for effects, eval, exec, and other extensions.
-data S u t a x y where 
-    -- Effects, Eval, Exec, Extensions, etc.
-    Sop     :: OpMeta -> a x y -> S u t a x y
-
-    -- Value Manipulations. 
-    -- Sfmap comes with an extra string for `show`.
-    Sfmap   :: (SigFun f s t) => String -> f x y -> S u t a (s x) (s y)
-    Sdrop   :: (SigShadow u s t, SigShadow s u t) => S u t a x (s ())
-    Sconv   :: (SigShadow s' u t, SigLift s s' t) => S u t a (s x) (s' x)
-
-    -- Value Composition (that requires touching signals)
-    Sdup    :: S u t a x (x :&: x)
-    Smerge  :: S u t a (x :|: x) x
-    Sdisj   :: S u t a (x :&: (y :|: z)) ((x :&: y) :|: (x :&: z))
-    Sconj   :: S u t a ((x :&: y) :|: (x :&: z)) (x :&: (y :|: z))
-    Szip    :: (Signal s t) => S u t a (s x :&: s y) (s (x,y))
-    Ssplit  :: (SigSplit s t) => S u t a (s (Either x y)) (s x :|: s y)
-
-    -- Temporal Manipulations
-    Sdelay  :: (SigTime t) => Diff t -> S u t a x x
-    Ssynch  :: S u t a x x 
-    Speek   :: (SigPeek s t) => Diff t -> S u t a (s x) (s () :|: s x)
-        -- drop, merge, zip, disjoin, and conjoin implicitly synch
-
--- NOTE:
--- Eval and Exec are handled as special operations (Sop)
--- to avoid direct dependency of S on B.
---   eval :: b x y -> ((s (b x y) :&: x) ~> y)
---   exec :: (s (b x y) :&: x) ~> s ()
-
 -- | Data-plumbing behaviors
 -- 'a' is the data processing and effect type
 -- typically, a = S t a2 for some agent type a2
@@ -2180,9 +2125,62 @@ getQ = fst . unQA
 getA :: QA q a x y -> a x y
 getA = snd . unQA
 
+-- | Signal operations. 
+-- Type `u` is a universal unit signal, and `t` is associated time.
+-- Type `a` is for Sop - effects, eval, exec, and other extensions.
+data S u t a x y where 
+    -- Effects, Eval, Exec, Extensions, etc.
+    Sop     :: OpMeta -> a x y -> S u t a x y
+    -- Eval and Exec are handled via Sop because they refer back to
+    -- the parent kind B (I want to avoid direct dependency there). 
+    --   eval :: Diff t -> b (s (b x y) :&: x) (u () :|: y)
+    --   exec :: b (s (b x (u ())) :&: x) (u () :|: u ())
+    -- Many effects would be achieved via mkBLink from RDP.Link, and
+    -- these are also represented via Sop.
+
+    -- Value Manipulations. 
+    -- Sfmap comes with an extra string for `show`.
+    Sfmap   :: (SigFun f s t) => String -> f x y -> S u t a (s x) (s y)
+    Sdrop   :: (SigShadow u s t, SigShadow s u t) => S u t a x (s ())
+    Sconv   :: (SigShadow s' u t, SigLift s s' t) => S u t a (s x) (s' x)
+
+    -- Value Composition (that require touching signals)
+    Sdup    :: S u t a x (x :&: x)
+    Smerge  :: S u t a (x :|: x) x
+    Sdisj   :: S u t a (x :&: (y :|: z)) ((x :&: y) :|: (x :&: z))
+    Sconj   :: S u t a ((x :&: y) :|: (x :&: z)) (x :&: (y :|: z))
+    Szip    :: (Signal s t) => S u t a (s x :&: s y) (s (x,y))
+    Ssplit  :: (SigSplit s t) => S u t a (s (Either x y)) (s x :|: s y)
+
+    -- Temporal Manipulations
+    Sdelay  :: (SigTime t) => Diff t -> S u t a x x
+    Ssynch  :: S u t a x x 
+    Speek   :: (SigPeek s t) => Diff t -> S u t a (s x) (s () :|: s x)
+        -- drop, merge, zip, disjoin, and conjoin implicitly synch
+
+-- | some extra metadata to help with simplification
+-- (so far just stuff from BLMeta)
+data OpMeta = OpMeta
+    { op_show :: String -- ^ string for debugging
+    , op_query :: Bool  -- ^ behavior is query, or otherwise safe to drop 
+    , op_tsen :: Bool   -- ^ behavior is time-sensitive, unsafe to time-shift
+    }
+
 ----------------------------
 -- BEHAVIOR FOLD MAP LEFT --
 ----------------------------
+
+-- Function types used in folds and maps.
+type BMapFn a a' x y = a x y -> a' x y
+type BMapMFn a a' m x y = a x y -> m (a' x y)
+type BFoldLFn u t l a x y = BD u t l x -> a x y -> BD u t l y
+type BFoldRFn u t l a x y = a x y -> BD u t l y -> BD u t l x
+type BFoldMLFn u t l a m x y = BD u t l x -> a x y -> m (BD u t l y)
+type BFoldMRFn u t l a m x y = a x y -> BD u t l y -> m (BD u t l x)
+type BFoldMapLFn u t l a a' x y = BD u t l x -> a x y -> (a' x y, BD u t l y)
+type BFoldMapRFn u t l a a' x y = a x y -> BD u t l y -> (BD u t l x, a' x y)
+type BFoldMapMLFn u t l a a' m x y = BD u t l x -> a x y -> m (a' x y, BD u t l y)
+type BFoldMapMRFn u t l a a' m x y = a x y -> BD u t l y -> m (BD u t l x, a' x y)
 
 -- | Map a function and generate a value, with effects:
 -- from left to right, first to second, inputs to outputs.
