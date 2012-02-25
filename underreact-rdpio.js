@@ -2058,7 +2058,7 @@ function wakeupSleepers( ins_Ord_t, qref, tm ) {
 
 {-# LANGUAGE GADTs, TypeOperators, Rank2Types #-}
 
-module RDP.Behavior 
+module RDP.BehADT 
     ( S (..), OpMeta(..)
     , B (..)
     , BD (..), bdfst, bdsnd, bdonl, bdonr
@@ -2072,11 +2072,11 @@ module RDP.Behavior
     , bsimplify
     ) where
 
+import RDP.Signal
+import RDP.Behavior ((:&:),(:|:))
 import Data.AffineSpace 
 import Data.AdditiveGroup
 import Control.Monad.Identity
-import RDP.RDSignal
-import RDP.RDBehavior ((:&:),(:|:))
 
 -- Function types used in folds over maps.
 type BMapFn a a' x y = a x y -> a' x y
@@ -2123,7 +2123,7 @@ data S u t a x y where
     Sdelay  :: (SigTime t) => Diff t -> S u t a x x
     Ssynch  :: S u t a x x 
     Speek   :: (SigPeek s t) => Diff t -> S u t a (s x) (s () :|: s x)
-        -- merge, zip, disjoin, and conjoin implicitly synch
+        -- drop, merge, zip, disjoin, and conjoin implicitly synch
 
 -- NOTE:
 -- Eval and Exec are handled as special operations (Sop)
@@ -2536,9 +2536,7 @@ DiscreteTimedSeq.lhs (header says DiscreteTimedSignal)
 SigDSeq.lhs
 SigD.lhs
 SigC.lhs
-Agent.lhs
+DemandMonitor.lhs
 Trans/Error.lhs
-Trans/State.lhs (Trans.StateBehavior)
-Trans/Writer.lhs (Trans.BWriter)
-Trans/Reader.lhs (Trans.BReader)
+Trans/Env.lhs
 */
