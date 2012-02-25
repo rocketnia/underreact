@@ -676,21 +676,15 @@ var class_SigTime = makeClass( {
 
 var class_Signal = makeClass( {
     ins_SigTime: null,
-    s_invert: null,
+    s_sample: null,
     s_never: null,
+    s_drop: null,
+    s_invert: null,
     s_mask: null,
     s_zip: null,
     s_merge: null,
-    s_drop: null,
-    su_drop: null,
     s_delay: null,
-    su_delay: null,
-    // PORT TODO: Make sure to implement su_apply curried, with one
-    // parameter leading into one other.
-    su_apply: null,
-    su_time: null,
     s_future: null,
-    s_sample: null,
     s_final: function ( s, t ) {
         return false;
     }
@@ -718,26 +712,17 @@ SigUpT_SUFuture.prototype.init = function () {
 
 var class_SigFun = makeClass( {
     ins_Signal: null,
-    s_fmap: null,
-    su_fmap: function ( f ) {
-        return new SigUpT_SUFuture().init();
-    }
+    s_fmap: null
 } );
 
 var class_SigSplit = makeClass( {
     ins_Signal: null,
-    s_split: null,
-    su_split: function () {
-        return new SigUpT_SUFuture().init();
-    }
+    s_split: null
 } );
 
 var class_SigPeek = makeClass( {
     ins_Signal: null,
-    s_peek: null,
-    su_peek: function ( dt ) {
-        return new SigUpT_SUFuture().init();
-    }
+    s_peek: null
 } );
 
 var class_SigSelect = makeClass( {
@@ -753,34 +738,26 @@ var class_SigDiscrete = makeClass( {
 var class_SigShadow = makeClass( {
     ins_Signal_of: null,
     ins_Signal_as: null,
-    s_shadow: null,
-    su_shadow: null
+    s_shadow: null
 } );
 
 var class_SigLift = makeClass( {
     ins_SigShadow: null,
-    s_lift: null,
-    su_lift: function () {
-        return new SigUpT_SUFuture().init();
-    }
+    s_lift: null
 } );
 
 function ins_Signal_SigShadow( ins_Signal ) {
     return makeInstance( class_SigShadow, {
         ins_Signal_of: ins_Signal,
         ins_Signal_as: ins_Signal,
-        s_shadow: id,
-        su_shadow: id
+        s_shadow: id
     } );
 }
 
 function ins_Signal_SigLift( ins_Signal ) {
     return makeInstance( class_SigLift, {
         ins_SigShadow: ins_Signal_SigShadow( ins_Signal ),
-        s_lift: id,
-        su_lift: function () {
-            return new SigUpT_SUPure().init( id );
-        }
+        s_lift: id
     } );
 }
 
@@ -805,8 +782,7 @@ function s_alt( ins_Functor, ins_Signal, a, b ) {
 
 var class_SigAdjeqf = makeClass( {
     ins_Signal: null,
-    s_adjeqf: null,
-    su_adjeqf: null
+    s_adjeqf: null
 } );
 
 
@@ -962,7 +938,8 @@ var class_BSig = makeClass( {
     bfmap: null,
     bunit: null,
     buconv: null,
-    bsconv: null
+    bsconv: null,
+    badjeqf: null
 } );
 
 // bdrop :: (BSig b u t, SigShadow s u t, SigShadow u s t)
@@ -975,7 +952,8 @@ function bdrop( ins_BSig, ins_SigShadow_in, ins_SigShadow_out ) {
 var class_BDelay = makeClass( {
     ins_SigTime: null,
     bdelay: null,
-    bsynch: null
+    bsynch: null,
+    delay_of_behavior: null
 } );
 
 var class_BProdBase = makeClass( {
@@ -1258,6 +1236,8 @@ LinkUp_LinkUp.prototype.init = function ( lu_update, lu_stable ) {
 
 function lu_time( ins_Signal, linkUp ) {
     return ins_Maybe_Functor.fmap( function ( lu_update ) {
+        // PORT TODO: Figure out what to do here now that su_time
+        // doesn't exist.
         return ins_Signal.su_time( lu_update );
     } )( linkUp.getLu_update() );
 }
@@ -1419,6 +1399,8 @@ function lrefOnBL(
             function ( ixAndS0And_ ) {
         var ix = ixAndS0And_[ 0 ], s0 = ixAndS0And_[ 1 ][ 0 ];
         return m.bind( h.readVar( vSig ), function ( ls ) {
+        // PORT TODO: Figure out what to do here now that su_apply
+        // doesn't exist.
         var sf = maybe( s0, ins_Signal.su_apply( s0 ) )(
             lu.getLu_update() );
         var tf = lu.getLu_stable();
@@ -1463,6 +1445,8 @@ function lrefOnLU(
         return m.bind( h.readVar( vSig ), function ( ls ) {
         var tl = lu.getLu_stable();
         var sl0 = maybe( ins_Signal.s_never(), fst )( ls );
+        // PORT TODO: Figure out what to do here now that su_apply
+        // doesn't exist.
         var sl = maybe( sl0, ins_Signal.su_apply( sl0 ) )(
             lu.getLu_update() );
         var sfc = maybe( ls, function ( tl ) {
