@@ -1157,6 +1157,12 @@ var class_Link = makeClass( {
     mkLinkDrop: null
 } );
 
+
+
+// ===================================================================
+// BLink.lhs
+// ===================================================================
+
 var class_BLink = makeClass( {
     ins_HasVar: null,
     ins_Link: null,
@@ -1213,26 +1219,6 @@ BLMeta_BLMeta.prototype.init = function (
 var blMetaDefault =
     new BLMeta_BLMeta( !"bl_query", !!"bl_tsen", "BLink" );
 
-function linkUpdate(
-    ins_Monad, ins_Signal, ins_HasClock, dt, luSend ) {
-    
-    var s = ins_Signal.ins_SigTime;
-    var a = s.ins_AffineSpace;
-    var dtf = s.ins_Ord.ins_Eq.eq(
-        dt, a.ins_AdditiveGroup.zeroV() ) ? id :
-        function ( t ) { return a.plusV( t, dt ); };
-    return function ( sig ) {
-        ins_Monad.bind( ins_HasClock.getTime(), function ( tNow ) {
-            var tm = dtf( tNow );
-            var su = ins_Signal.s_future( tm, sig );
-            var lu = new LinkUp_LinkUp().init(
-                new Maybe_Just().init( su ),
-                new Maybe_Just().init( tm ) );
-            return luSend( lu );
-        } );
-    };
-}
-
 // mkLinkRef :: (BLink v b u t, SigShadow s u t, SigShadow u s t)
 //           => String                    -- ^ debug string
 //           -> Diff t                    -- ^ extra history to keep
@@ -1244,7 +1230,7 @@ function mkLinkRef(
     
     var ignoreSub = kfn( ins_BLink.ins_HasVar.ins_Monad.ret( [] ) );
     return mkLinkRefD( ins_BLink, ins_SigShadow_out, ins_SigShadow_in,
-        sDebug, ignoreSub, dtHist );
+        sDebug, dtHist, ignoreSub );
 }
 
 // mkLinkRefD :: (BLink v b u t, SigShadow s u t, SigShadow u s t)
@@ -1256,7 +1242,7 @@ function mkLinkRef(
 //                 ,b (s ()) (s x)      -- ^ to share the reference
 //                 )
 function mkLinkRefD( ins_BLink, ins_SigShadow_out, ins_SigShadow_in,
-    sDebug, onSub, dtHist ) {
+    sDebug, dtHist, onSub ) {
     
     var v = ins_BLink.ins_HasVar;
     var ins_Vat = ins_BLink.ins_Link.ins_Vat;
@@ -1276,22 +1262,23 @@ function mkLinkRefD( ins_BLink, ins_SigShadow_out, ins_SigShadow_in,
         function ( vSig ) {
     return m.bind( v.newVar( [ bigint( 1 ), dictEmpty() ] ),
         function ( vObs ) {
-    var onLU = lrefOnLU( s, ins_Vat, v, fdt, onSub, vSig, vObs );
-    var onBL = lrefOnBL( s, ins_Vat, v, onSub, vSig, vObs );
+    var onLinkUp =
+        lrefOnLinkUp( s, ins_Vat, v, fdt, onSub, vSig, vObs );
+    var onBLConn = lrefOnBLConn( s, ins_Vat, v, onSub, vSig, vObs );
     var blm =
         new BLMeta_BLMeta().init( !!"bl_query", !!"bl_tsen", sDebug );
     var st0 = [ 0, [ s.s_never(), new Maybe_Nothing().init() ] ];
     return m.bind(
         ins_BLink.mkBLink( ins_SigShadow_in, ins_SigShadow_out,
-            blm, st0, onBL ),
+            blm, st0, onBLConn ),
         function ( bl ) {
-    return m.ret( [ onLU, bl ] );
+    return m.ret( [ onLinkUp, bl ] );
     } );
     } );
     } );
 }
 
-function lrefOnBL(
+function lrefOnBLConn(
     ins_Signal, ins_Vat, ins_HasVar, onSub, vSig, vObs ) {
     
     return function ( blr, lu ) {
@@ -1301,9 +1288,7 @@ function lrefOnBL(
             function ( ixAndS0And_ ) {
         var ix = ixAndS0And_[ 0 ], s0 = ixAndS0And_[ 1 ][ 0 ];
         return m.bind( h.readVar( vSig ), function ( ls ) {
-        // PORT TODO: Figure out what to do here now that su_apply
-        // doesn't exist.
-        var sf = maybe( s0, ins_Signal.su_apply( s0 ) )(
+        var sf = maybe( s0, su_apply( ins_Signal, s0 ) )(
             lu.getLu_update() );
         var tf = lu.getLu_stable();
         if ( ls instanceof Maybe_Nothing )
@@ -1320,25 +1305,23 @@ function lrefOnBL(
         var bdone = maybe( true, function ( tx ) {
             return s_term( ins_Signal, sfc, tx );
         } )( tx );
-        var autoSubscribe = bdone ? lrefUnsubscribe : lrefSubscribe;
+        var autoSub = bdone ? lrefUnsubscribe : lrefSubscribe;
         var lsm = ins_Signal.s_mask( sl, sf );
-        var tu = lu_time( ins_Signal, lu );
         var slu = ins_Maybe_Functor.fmap( function ( tu ) {
-            return ins_Signal.s_future( tu, slm );
-        } )( tu );
+            return su_future( ins_Signal, tu, slm );
+        } )( lu_time( ins_Signal, lu ) );
         var lux = new LinkUp_LinkUp().init( slu, tx );
         return m.then(
             h.writeVar( blr.getBl_state(), [ ix, [ sfc, tf ] ] ),
             m.then(
-                autoSubscribe(
-                    ins_Signal, ins_Vat, h, onSub, vObs, blr ),
+                autoSub( ins_Signal, ins_Vat, h, onSub, vObs, blr ),
                 blr.getBl_link()( lux ) ) );
         } );
         } );
     };
 }
 
-function lrefOnLU(
+function lrefOnLinkUp(
     ins_Signal, ins_Vat, ins_HasVar, cutHist, onSub, vSig, vObs ) {
     
     return function ( lu ) {
@@ -1347,9 +1330,7 @@ function lrefOnLU(
         return m.bind( h.readVar( vSig ), function ( ls ) {
         var tl = lu.getLu_stable();
         var sl0 = maybe( ins_Signal.s_never(), fst )( ls );
-        // PORT TODO: Figure out what to do here now that su_apply
-        // doesn't exist.
-        var sl = maybe( sl0, ins_Signal.su_apply( sl0 ) )(
+        var sl = maybe( sl0, su_apply( ins_Signal, sl0 ) )(
             lu.getLu_update() );
         var sfc = maybe( ls, function ( tl ) {
             return snd( ins_Signal.s_sample( sl, cutHist( tl ) ) );
@@ -1375,10 +1356,9 @@ function lrefOnLU(
                     return s_term( ins_Signal, sdc, tx );
                 } )( tx );
                 var slm = ins_Signal.s_mask( sl, sd );
-                var tu = lu_time( ins_Signal, lu );
                 var slu = ins_Maybe_Functor.fmap( function ( tu ) {
-                    return ins_Signal.s_future( tu, slm );
-                } )( tu );
+                    return su_future( ins_Signal, tu, slm );
+                } )( lu_time( ins_Signal, lu ) );
                 var lux = new LinkUp_LinkUp().init( slu, tx );
                 return m.then(
                     h.writeVar(
@@ -1447,6 +1427,18 @@ function tmin( ins_Ord, x, y ) {
     if ( x instanceof Maybe_Nothing ) return y;
     if ( y instanceof Maybe_Nothing ) return x;
     return new Maybe_Just().init( ins_Ord.min( x.just, y.just ) );
+}
+
+function su_apply( ins_Signal, s0 ) {
+    return function ( tuAndSu ) {
+        var tu = tuAndSu[ 0 ], su = tuAndSu[ 1 ];
+        return ins_Signal.s_future( s0, tu, su );
+    };
+}
+
+function su_future( ins_Signal, tm, s0 ) {
+    var su = ins_Signal.s_sample( s0, tm )[ 1 ];
+    return [ tm, su ];
 }
 
 
