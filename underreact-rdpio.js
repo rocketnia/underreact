@@ -1937,8 +1937,8 @@ function wakeupSleepers( ins_Ord_t, qref, tm ) {
 {-# LANGUAGE GADTs, TypeOperators, Rank2Types #-}
 
 module RDP.BehADT 
-    ( S (..), OpMeta(..)
-    , B (..)
+    ( S (..)
+    , B (..), bsum, bprod
     , BD (..), bdfst, bdsnd, bdonl, bdonr
     , BMapFn, BMapMFn
     , BFoldLFn, BFoldMLFn, BFoldMapLFn, BFoldMapMLFn
@@ -1947,13 +1947,11 @@ module RDP.BehADT
     , bfoldmapl, bfoldmapml, bfoldl, bfoldml
     , bfoldmapr, bfoldmapmr, bfoldr, bfoldmr
     , QA(..), QL(..), QR(..), getA, getQ
-    , bsimplify
     ) where
 
 import RDP.Signal
 import RDP.Behavior ((:&:),(:|:))
-import Data.AffineSpace 
-import Data.AdditiveGroup
+import Data.AffineSpace (Diff)
 import Control.Monad.Identity
 
 -- | Data-plumbing behaviors
@@ -1982,12 +1980,19 @@ data B a x y where
     Bmirr :: B a (x :|: y) (y :|: x)
     Basl  :: B a (x :|: (y :|: z)) ((x :|: y) :|: z)
 
+bsum :: B a x y -> B a x' y' -> B a (x :|: x') (y :|: y')
+bsum l r = Bolft l `Bseq` Bmirr `Bseq` Bolft r `Bseq` Bmirr
+
+bprod :: B a x y -> B a x' y' -> B a (x :&: x') (y :&: y')
+bprod l r = Bofst l `Bseq` Bswap `Bseq` Bofst r `Bseq` Bswap
+
 -- | data about boundaries between behaviors (RDP specific)
 -- Propagates shadow signals through the model:
 --   SigShadow s u t is necessary for `bdrop` 
 --   SigShadow u s t is necessary for `bdisjoin` mask
 data BD u t l x where
-    BDSig  :: (SigShadow s u t, SigShadow u s t) => l s a -> BD u t l (s a)
+    BDSig  :: (SigShadow s u t, SigShadow u s t) 
+           => l s a -> BD u t l (s a)
     BDProd :: BD u t l x -> BD u t l y -> BD u t l (x :&: y)
     BDSum  :: BD u t l x -> BD u t l y -> BD u t l (x :|: y)
     BDNull :: BD u t l x  -- for dead code due to inl, inr, fst, snd 
@@ -2026,7 +2031,7 @@ getA = snd . unQA
 -- Type `a` is for Sop - effects, eval, exec, and other extensions.
 data S u t a x y where 
     -- Effects, Eval, Exec, Extensions, etc.
-    Sop     :: OpMeta -> a x y -> S u t a x y
+    Sop     :: a x y -> S u t a x y
     -- Eval and Exec are handled via Sop because they refer back to
     -- the parent kind B (I want to avoid direct dependency there). 
     --   eval :: Diff t -> b (s (b x y) :&: x) (u () :|: y)
@@ -2039,7 +2044,8 @@ data S u t a x y where
     Sfmap   :: (SigFun f s t) => String -> f x y -> S u t a (s x) (s y)
     Sunit   :: S u t a x (u ())
     Suconv  :: (SigShadow s u t, SigShadow u s t) => S u t a (u ()) (s ())
-    Sconv   :: (SigShadow s' u t, SigLift s s' t) => S u t a (s x) (s' x)
+    Sconv   :: (SigShadow s' u t, SigShadow u s' t, SigLift s s' t) 
+            => S u t a (s x) (s' x)
 
     -- Value Composition (that require touching signals)
     Sdup    :: S u t a x (x :&: x)
@@ -2054,14 +2060,6 @@ data S u t a x y where
     Ssynch  :: S u t a x x 
     Speek   :: (SigPeek s t) => Diff t -> S u t a (s x) (s () :|: s x)
         -- drop, merge, zip, disjoin, and conjoin implicitly synch
-
--- | some extra metadata to help with simplification
--- (so far just stuff from BLMeta)
-data OpMeta = OpMeta
-    { op_show :: String -- ^ string for debugging
-    , op_query :: Bool  -- ^ behavior is query, or otherwise safe to drop 
-    , op_tsen :: Bool   -- ^ behavior is time-sensitive, unsafe to time-shift
-    }
 
 ----------------------------
 -- BEHAVIOR FOLD MAP LEFT --
@@ -2227,165 +2225,6 @@ bfoldmr af b y0 = bfoldmapmr (bfoldmrf af) b y0 >>= return . fst
 bfoldmrf :: (Monad m) => BFoldMRFn u t l a m d r 
          -> BFoldMapMRFn u t l a (B a) m d r
 bfoldmrf af a y = af a y >>= \ x -> return (x, Bop a)
-
----------------------------
--- Simplifying Behaviors --
----------------------------
-
--- Listify a sequence. E.g. (f >>> (g >>> h)) >>> ((i >>> j) >>> k)
--- reduces to (f >>> (g >>> (h >>> (i >>> (j >>> k))))))
-bseqlist :: B a x y -> B a y z -> B a x z
-bseqlist (Bseq f g) h = bseqlist f (Bseq g h)
-bseqlist f (Bseq g h) = f `Bseq` bseqlist g h
-bseqlist f g = f `Bseq` g 
-
--- simple list reductions. Assume `r` is simplified, i.e. simplify
--- starting from right hand side. Shifting of `drop` to left and
--- `delay` sufficient only to optimize across them.
-bsimplseq :: B (S u t a) x y -> B (S u t a) x y
-bsimplseq (Bseq Bfwd r) = r         -- NOP in sequence
-bsimplseq (Bseq (Bofst Bfwd) r) = r -- NOP on first element
-bsimplseq (Bseq (Bolft Bfwd) r) = r -- NOP on left element.
-    -- combine sequential actions on first element.
-bsimplseq (Bseq (Bofst f) (Bseq (Bofst f') r)) =
-    (Bseq (Bofst (Bseq f f')) r)
-bsimplseq (Bseq (Bofst f) (Bseq Bswap 
-          (Bseq (Bofst g) (Bseq Bswap
-          (Bseq (Bofst f') r))))) = 
-    (Bseq Bswap (Bseq (Bofst g)
-    (Bseq Bswap (Bseq (Bofst (Bseq f f')) r))))
-    -- combine sequential actions on left element
-bsimplseq (Bseq (Bolft f) (Bseq (Bolft f') r)) =
-    (Bolft (Bseq f f') `Bseq` r)
-bsimplseq (Bseq (Bolft f) (Bseq Bmirr
-          (Bseq (Bolft g) (Bseq Bmirr
-          (Bseq (Bolft f') r))))) = 
-    (Bseq Bmirr (Bseq (Bolft g)
-    (Bseq Bmirr (Bseq (Bolft (Bseq f f')) r))))
-    -- basic reversible behaviors
-bsimplseq (Bseq Bswap (Bseq Bswap r)) = r -- swap/swap
-bsimplseq (Bseq Bmirr (Bseq Bmirr r)) = r -- mirror/mirror
-bsimplseq (Bseq (Bop Sconj) (Bseq (Bop Sdisj) r)) = r -- conjoin/disjoin
-bsimplseq (Bseq (Bop Sdisj) (Bseq (Bop Sconj) r)) = r -- disjoin/conjoin
-    -- assoc-left and assoc-right, via swap3 or mirror3 
-bsimplseq (Bseq (Bofst Bswap) (Bseq Bswap (Bseq Bapl
-          (Bseq (Bofst Bswap) (Bseq Bswap (Bseq Bapl r)))))) = r
-bsimplseq (Bseq Bapl (Bseq (Bofst Bswap) (Bseq Bswap
-          (Bseq Bapl (Bseq (Bofst Bswap) (Bseq Bswap r)))))) = r
-bsimplseq (Bseq (Bolft Bmirr) (Bseq Bmirr (Bseq Basl
-          (Bseq (Bolft Bmirr) (Bseq Bmirr (Bseq Basl r)))))) = r
-bsimplseq (Bseq Basl (Bseq (Bolft Bmirr) (Bseq Bmirr
-          (Bseq Basl (Bseq (Bolft Bmirr) (Bseq Bmirr r)))))) = r
-    -- time-shifts and time merges
-bsimplseq (Bseq (Bop Ssynch) (Bseq (Bop Ssynch) r)) = 
-    (Bseq (Bop Ssynch) r)
-bsimplseq (Bseq (Bop (Sdelay d0)) (Bseq (Bop (Sdelay d1)) r)) =
-    (Bseq (Bop (Sdelay (d0 ^+^ d1))) r)
-bsimplseq b@(Bseq (Bop (Sdelay dt)) (Bseq f r)) =
-    if bshiftable f 
-        then (Bseq f (bsimplseq (Bseq (Bop (Sdelay dt)) r)))
-        else b
-    -- distribute drop across a product or sum.
-bsimplseq (Bseq (Bofst f) (Bseq (Bop Sunit) r)) =
-    let f' = (Bseq f (Bop Sunit)) in
-    (Bseq (Bofst f') (Bseq (Bop Sunit) r))
-bsimplseq (Bseq (Bofst f) (Bseq Bswap
-          (Bseq (Bofst g) (Bseq (Bop Sunit) r)))) =
-    let f' = (Bseq f (Bop Sunit)) in
-    (Bseq (Bofst f') (Bseq Bswap
-    (Bseq (Bofst g) (Bseq (Bop Sunit) r))))
-bsimplseq (Bseq (Bolft f) (Bseq (Bop Sunit) r)) =
-    let f' = (Bseq f (Bop Sunit)) in
-    (Bseq (Bolft f') (Bseq (Bop Sunit) r))
-bsimplseq (Bseq (Bolft f) (Bseq Bmirr 
-          (Bseq (Bolft g) (Bseq (Bop Sunit) r)))) =
-    let f' = (Bseq f (Bop Sunit)) in
-    (Bseq (Bolft f') (Bseq Bmirr
-    (Bseq (Bolft g) (Bseq (Bop Sunit) r))))
-    -- distribute drop across merge
-bsimplseq (Bseq (Bop Smerge) (Bseq (Bop Sunit) r)) =
-    (Bseq (Bolft (Bop Sunit)) (Bseq Bmirr
-    (Bseq (Bolft (Bop Sunit)) (Bseq Bmirr
-    (Bseq (Bop Smerge) (Bseq (Bop Sunit) r))))))
-    -- eliminate other droppable elements
-bsimplseq b@(Bseq f (Bseq (Bop Sunit) r)) =
-    if bdroppable f 
-        then (Bseq (Bop Sunit) r) 
-        else b
-    -- none of the above? call it simplified.
-bsimplseq b = b
-
-
--- Shiftable means delay can be shifted to after this action. This
--- is a conservative estimate, supports other simplifications. Does
--- not split, dup, merge, or zip delays.
---
--- Droppable means that the behavior can be dropped if its output is
--- dropped. This is simplistic dead-code elimination. 
-bshiftable, bdroppable :: B (S u t a) x y -> Bool
-sshiftable, sdroppable :: S u t a x y -> Bool
-
-bshiftable (Bop s) = sshiftable s
-bshiftable Bfwd = True
-bshiftable Bfst = True
-bshiftable Bswap = True
-bshiftable Bapl = True
-bshiftable Binl = True
-bshiftable Bmirr = True
-bshiftable Basl = True
-bshiftable _ = False
-
-bdroppable (Bop s) = sdroppable s
-bdroppable Bfwd = True
-bdroppable Bswap = True
-bdroppable Bapl = True
-bdroppable Binl = True
-bdroppable Bmirr = True
-bdroppable Basl = True
-bdroppable _ = False
-
-sshiftable (Sop m _) = not $ op_tsen m
-sshiftable (Sfmap _ _) = True
-sshiftable Sconv = True
-sshiftable Suconv = True
-sshiftable Sunit = True
-sshiftable Smerge = True
-sshiftable Sdisj = True
-sshiftable Sconj = True
-sshiftable Szip = True
-sshiftable Ssynch = True
-sshiftable _ = False
-
-sdroppable (Sop m _) = op_query m
-sdroppable (Sfmap _ _) = True
-sdroppable Sconv = True
-sdroppable Suconv = True
-sdroppable Sunit = True
-sdroppable Sdup = True
-sdroppable Sdisj = True
-sdroppable Sconj = True
-sdroppable Szip = True
-sdroppable Ssplit = True
-sdroppable (Speek _) = True
-sdroppable Ssynch = True
-sdroppable _ = False
-
--- simplify sequences from right to left.
-bsimplify' :: B (S u t a) x y -> B (S u t a) x y
-bsimplify' (Bseq f g) = bsimplseq (Bseq f (bsimplify' g))
-bsimplify' f = f
-
--- simplify sub-sequences and remove final `Bfwd`
-bsimplsub :: B (S u t a) x y -> B (S u t a) x y
-bsimplsub (Bseq f Bfwd) = bsimplsub f
-bsimplsub (Bseq f g) = Bseq (bsimplsub f) (bsimplsub g)
-bsimplsub (Bofst f) = Bofst (bsimplify f)
-bsimplsub (Bolft f) = Bolft (bsimplify f)
-bsimplsub f = f
-
--- | bsimplify is peephole simplification of a behavior.
-bsimplify :: B (S u t a) x y -> B (S u t a) x y
-bsimplify = bsimplsub . bsimplify' . flip bseqlist Bfwd
 */
 
 
