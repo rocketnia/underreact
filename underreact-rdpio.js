@@ -910,8 +910,7 @@ var class_BSig = makeClass( {
     bfmap: null,
     bunit: null,
     buconv: null,
-    bsconv: null,
-    badjeqf: null
+    bconv: null
 } );
 
 // bdrop :: (BSig b u t, SigShadow s u t, SigShadow u s t)
@@ -924,8 +923,7 @@ function bdrop( ins_BSig, ins_SigShadow_in, ins_SigShadow_out ) {
 var class_BDelay = makeClass( {
     ins_SigTime: null,
     bdelay: null,
-    bsynch: null,
-    delay_of_behavior: null
+    bsynch: null
 } );
 
 var class_BProdBase = makeClass( {
@@ -2052,11 +2050,11 @@ data S u t a x y where
     Smerge  :: S u t a (x :|: x) x
     Sdisj   :: S u t a (x :&: (y :|: z)) ((x :&: y) :|: (x :&: z))
     Sconj   :: S u t a ((x :&: y) :|: (x :&: z)) (x :&: (y :|: z))
-    Szip    :: (Signal s t) => S u t a (s x :&: s y) (s (x,y))
+    Szip    :: (SigShadow s u t) => S u t a (s x :&: s y) (s (x,y))
     Ssplit  :: (SigSplit s t) => S u t a (s (Either x y)) (s x :|: s y)
 
     -- Temporal Manipulations
-    Sdelay  :: (SigTime t) => Diff t -> S u t a x x
+    Sdelay  :: (Signal u t) => Diff t -> S u t a x x
     Ssynch  :: S u t a x x 
     Speek   :: (SigPeek s t) => Diff t -> S u t a (s x) (s () :|: s x)
         -- drop, merge, zip, disjoin, and conjoin implicitly synch
