@@ -1,54 +1,3 @@
-var t = {};
-t.neg = function ( type ) {
-    return { type: "neg", of: type };
-};
-t.any_ = { type: "any" };
-t.any = function () {
-    return t.any_;
-};
-t.cap = function ( aka, opt_of ) {
-    if ( opt_of === void 0 )
-        opt_of = t.any();
-    return { type: "cap", aka: aka, of: opt_of };
-};
-t.key = function ( key, val ) {
-    return { type: "key", k: key, v: val };
-};
-t.named = function ( name ) {
-    return t.key( name, t.any() );
-};
-var tVal = t.named( "val" );
-var tnVal = t.neg( tVal );
-var v = {};
-v.call = function ( fn, var_args ) {
-    return magic( function ( hook ) {
-        _.each( _.cut( arguments, 1 ), function ( arg ) {
-            hook( fn.bot().key( "val" ).neg().key( "val" ),
-                arg.top().key( "val" ) );
-        } );
-    } );
-    var fnEnd = fn.bot( t.key( "val", t.cap( "v" ) );
-    var fn
-    var fnEnd = fn.bot();
-    var argTops = _.map( _.cut( arguments, 1 ), function ( arg ) {
-        return arg.top();
-    } );
-    this.addNode_( [
-        [ fn.bot(), v
-        [ t.neg( "type" )
-        fn.getOut( "val" ),
-    ] );
-};
-
-function mo
-
-o.call( foo, a, b, c )
-
-
-
-
-
-
 
 var pathResolvers = {};
 function fexprEval( env, expr ) {
@@ -74,16 +23,16 @@ Edge.prototype.top = function () {
 Edge.prototype.bot = function () {
     return this.bot_;
 };
-End.prototype.mustBot = function () {
+Edge.prototype.mustBot = function () {
     return this.bot_;
 };
-End.prototype.mustTop = function () {
+Edge.prototype.mustTop = function () {
     return this.top_;
 };
-End.prototype.shouldBot = function () {
+Edge.prototype.shouldBot = function () {
     return this.bot_;
 };
-End.prototype.shouldTop = function () {
+Edge.prototype.shouldTop = function () {
     return this.top_;
 };
 function End() {}
@@ -301,3 +250,126 @@ GraphDsl.prototype.w = function ( destructure, restructure ) {
     
     // TODO
 };
+
+
+// (= plus (fn (start) (fn () (= start (+ start 1)))))
+var counter = $.globalvar( "counter" );
+var plus = $.globalvar( "plus" );
+_.pushBody( $.assign( _.captured( counter ),
+    $.lambda( function ( _ ) {
+    
+    var start = _.popArg();
+    _.pushBody( $.lambda( function ( _ ) {
+        _.pushBody( $.assign( _.captured( start ),
+            $.call( _.captured( plus ),
+                _.captured( start ), $.literal( 1 ) ) ) );
+    } ) );
+} ) ) );
+
+
+
+var counter = $.g( "counter" );
+var plus = $.g( "plus" );
+return $.assign( _.cPlace( counter ), $.fn( _, function ( _ ) {
+    var start = _.local();
+    return [ [ start ], $.fn( _, function ( _ ) {
+        return [ [], $.assign( _.cPlace( start ),
+            $.call( _.c( plus ), _.c( start ), $.lit( 1 ) ) ) ];
+    } ) ];
+} ) );
+
+
+function SchemelikeDsl() {}
+SchemelikeDsl.prototype.init = function () {
+    return this;
+};
+SchemelikeDsl.prototype.g = function ( name ) {
+    return { op: "global", of: [ name ] };
+};
+SchemelikeDsl.prototype.assign = function ( to, from ) {
+    return { op: "assign", of: [ to, from ] };
+};
+SchemelikeDsl.prototype.fn = function ( parentScope, scopeBody ) {
+    var renameMap = parentScope.renameCaptures( scopeBody );
+    
+    return { op: "fn", of: [ renameMap scopeBody( parentScope.[ to, from ] };
+};
+
+
+
+
+function ReactDsl() {}
+ReactDsl.prototype.init = function () {
+    return this.initSub( null );
+};
+ReactDsl.prototype.initSub = function ( parent ) {
+    this.parent_ = parent;
+    this.id_ = parent === null ? "_" : parent.childId();
+    this.children_ = 0;
+    this.nodes_ = 0;
+    this.startNode_ = this.node();
+    this.finishNode_ = null;
+    this.edgeTypes_ = {};
+    this.graph_ = [];
+    return this;
+};
+ReactDsl.prototype.childId = function () {
+    return this.id_ + "_" + (this.children_++);
+};
+ReactDsl.prototype.takeVal = function ( input ) {
+    if ( input.graphId === this.id_ )
+        return input.nodeId;
+    if ( !this.freeVars_[ input.nodeId ] )
+        this.freeVars_[ input.nodeId ] = this.node();
+    return this.freeVars_[ input.nodeId ].nodeId;
+};
+ReactDsl.prototype.node = function () {
+    return { graphId: this.id_,
+        nodeId: this.id_ + "$" + (this.nodes_++) };
+};
+ReactDsl.prototype.freeVars = function () {
+    var freeVars = this.freeVars_;
+    return { map: function ( func ) {
+        var result = {};
+        for ( var k in freeVars )
+            result[ freeVars[ k ].nodeId ] = func( k );
+        return result;
+    } };
+};
+ReactDsl.prototype.graph = function () {
+    // TODO: See if the graph should be a separate thing in its own
+    // right.
+    return this;
+};
+ReactDsl.prototype.param = function () {
+    return this.startNode_;
+};
+ReactDsl.prototype.call = function ( a, b ) {
+    a = this.takeVal( a );
+    b = this.takeVal( b );
+    var result = this.node();
+    this.graph_.push( [ "call", a, b, result.nodeId ] );
+    return result;
+};
+ReactDsl.prototype.fn = function ( body ) {
+    var subdsl = new ReactDsl().initSub( this );
+    subdsl.finish( body( subdsl ) );
+    var result = this.node();
+    var self = this;
+    var freeVars = subdsl.freeVars().map( function ( v ) {
+        return self.takeVal( freeVars );
+    } );
+    this.graph_.push(
+        [ "fn", freeVars, subdsl.graph(), result.nodeId ] );
+    return result;
+};
+ReactDsl.prototype.when = function ( cond, then, els ) {
+    cond = this.takeVal( cond );
+    then = this.takeVal( then );
+    els = this.takeVal( els );
+    var result = this.node();
+    this.graph_.push( [ "if", cond, then, els, result.nodeId ] );
+    return result;
+};
+
+
