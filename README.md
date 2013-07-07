@@ -11,6 +11,12 @@ attempt to port David Barbour's Haskell code directly. I abandoned
 this before completing it, mostly because it was too hard to keep up
 with the upstream changes.
 
+The file "graphlang.js" is a JavaScript EDSL for constructing
+data-control flow graphs, so that the code to build the data-control
+flow graph looks vaguely similar to how the same data-control flow
+appears in JavaScript itself. This may come in handy for writing RDP
+behavior graphs, once some kind of semantics exists for them.
+
 The file "underreact-dynamic.js" is a new attempt. I've modeled
 recursive links and resource spaces, and soon I'm going to need some
 actually useful I/O resources and a way to compose continuous-time
