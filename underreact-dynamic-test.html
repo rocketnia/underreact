@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=UTF-8" />
+<title>Test underreact-dynamic.js</title>
+<!-- underreact-dynamic-test.html -->
+<!--
+
+The copyright and license information below applies to this file as an
+independent work. Other files commonly used or bundled with this one
+may have different authors and different posted licenses.
+
+-->
+<!--
+
+Copyright (c) 2012, Ross Angle
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+* Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+-->
+<meta name="viewport"
+    content="initial-scale = 1.0, maximum-scale = 1.0" />
+<style type="text/css">
+</style>
+
+<!--
+TODO: Stop hotlinking this to rocketnia.com. It isn't necessarily a
+stable URL, and it's inconvenient for offline development.
+-->
+<script type="text/javascript"
+    src="http://www.rocketnia.com/lib/lathe.js"></script>
+
+<script type="text/javascript">"use strict";
+var _ = rocketnia.lathe;
+</script>
+<script type="text/javascript" src="underreact-dynamic.js"></script>
+<script type="text/javascript">"use strict";
+_.appendDom( window, { load: function () {
+    _.appendDom( document.body, makeTestForMakeLinkPair().dom );
+} } );
+</script>
+</head>
+<body>
+<p>Below, observe a test as the mouse moves. Don't worry, the
+    one-second delay is part of the test:</p>
+</body>
+</html>
