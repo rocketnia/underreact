@@ -1,6 +1,33 @@
 // underreact-dynamic.js
-// Copyright 2013 Ross Angle. Released under the MIT License.
-"use strict";
+
+// Copyright (c) 2013, Ross Angle
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+//
+// * Redistributions of source code must retain the above copyright
+// notice, this list of conditions and the following disclaimer.
+//
+// * Redistributions in binary form must reproduce the above copyright
+// notice, this list of conditions and the following disclaimer in the
+// documentation and/or other materials provided with the
+// distribution.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+// FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+// COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
+// INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+// (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+// SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+// HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+// STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+// OF THE POSSIBILITY OF SUCH DAMAGE.
+
 
 // TODO: Implement some useful resources (to go along with
 // UselessResource and DispatcherResource). Namely, it would be nice
@@ -12,9 +39,6 @@
 // TODO: Implement persistence for resources, and perhaps implement a
 // localStorage resource to demonstrate it with.
 //
-// TODO: Implement a way to construct pairs of linked GlobalLinks at
-// the same time. (This will be easy.)
-//
 // TODO: Implement behavior internal objects. These will typically be
 // initialized using a JavaScript function that takes multiple
 // GlobalLinks as parameters and then links them together in a custom
@@ -25,10 +49,14 @@
 // of GlobalLink pairs and behavior internal objects. Behaviors may
 // have some type-system-like restrictions on how they can be
 // composed, or perhaps it would be better to separate that
-// restriction system ino its own abstraction layer (and call that
+// restriction system into its own abstraction layer (and call that
 // layer "behaviors" instead of this one).
 //
-// TODO: Run this code someday.
+// TODO: Build more tests at some point. The current one tests
+// demands, but not responses.
+
+
+"use strict";
 
 
 function Map() {}
@@ -501,7 +529,7 @@ GlobalLink.prototype.init = function (
 };
 GlobalLink.prototype.updateInResponseIgnoranceMillis_ = function () {
     var self = this;
-    var self.inResponseIgnoranceMillis_ =
+    self.inResponseIgnoranceMillis_ =
         self.otherOutPermanentUntilMillis_;
     _.arrEach( self.outDemanders_, function ( od ) {
         self.inResponseIgnoranceMillis_ = Math.min(
@@ -520,14 +548,14 @@ GlobalLink.prototype.scrapOutDemanders_ = function () {
 GlobalLink.prototype.makeOutResponsesHistory_ = function (
     delayMillis, inputData, startMillis ) {
     
-    return self.outResponsesByDelayAndInput_.
+    return this.outResponsesByDelayAndInput_.
         getOrMake( delayMillis, null ).
         getOrMake( inputData, startMillis );
 };
 GlobalLink.prototype.makeInResponsesHistory_ = function (
     delayMillis, inputData, startMillis ) {
     
-    return self.inResponsesByDelayAndInput_.
+    return this.inResponsesByDelayAndInput_.
         getOrMake( delayMillis, null ).
         getOrMake( inputData, startMillis );
 };
@@ -666,6 +694,28 @@ GlobalLink.prototype.getInDemandHistoryEntries = function () {
         };
     } );
 };
+// TODO: See if we can combine the code for
+// forgetInDemandBeforeDemandMillis and
+// forgetInDemandBeforeResponseMillis. Also, see if we're actually
+// going to use forgetInDemandBeforeResponseMillis at some point.
+GlobalLink.prototype.forgetInDemandBeforeDemandMillis = function (
+    demandMillis ) {
+    
+    var actualForgetDemandMillis =
+        Math.min( demandMillis, this.inPermanentUntilMillis_ );
+    
+    this.inDemands_ = _.arrMappend( this.inDemands_,
+        function ( demand ) {
+        
+        if ( entsEnd( demand.demandDataHistory.getAllEntries() ) <=
+            actualForgetDemandMillis )
+            return [];
+        demand.demandDataHistory.forgetBeforeMillis(
+            actualForgetDemandMillis );
+        return [ { delayMillis: demand.delayMillis,
+            demandDataHistory: demand.demandDataHistory } ];
+    } );
+};
 GlobalLink.prototype.forgetInDemandBeforeResponseMillis = function (
     responseMillis ) {
     
@@ -675,13 +725,13 @@ GlobalLink.prototype.forgetInDemandBeforeResponseMillis = function (
     this.inDemands_ = _.arrMappend( this.inDemands_,
         function ( demand ) {
         
-        var forgetDemandMillis =
+        var actualForgetDemandMillis =
             actualForgetResponseMillis - demand.delayMillis;
         if ( entsEnd( demand.demandDataHistory.getAllEntries() ) <=
-            forgetDemandMillis )
+            actualForgetDemandMillis )
             return [];
         demand.demandDataHistory.forgetBeforeMillis(
-            forgetDemandMillis );
+            actualForgetDemandMillis );
         return [ { delayMillis: demand.delayMillis,
             demandDataHistory: demand.demandDataHistory } ];
     } );
@@ -898,6 +948,164 @@ GlobalLink.prototype.getNewOutDemander = function (
 // };
 
 
+function makeLinkedPair(
+    outPermanentUntilMillis, deferForBatching ) {
+    
+    var aListeners = [];
+    var aLink = new GlobalLink().init(
+        outPermanentUntilMillis, deferForBatching,
+        function ( message ) {  // sendMessage
+            bLink.receiveMessage( message );
+        },
+        function () {  // syncOnInDemandAvailable
+            _.arrEach( aListeners, function ( listener ) {
+                listener();
+            } );
+        } );
+    
+    var bListeners = [];
+    var bLink = new GlobalLink().init(
+        outPermanentUntilMillis, deferForBatching,
+        function ( message ) {  // sendMessage
+            aLink.receiveMessage( message );
+        },
+        function () {  // syncOnInDemandAvailable
+            _.arrEach( bListeners, function ( listener ) {
+                listener();
+            } );
+        } );
+    
+    return {
+        a: {
+            link: aLink,
+            listen: function ( listener ) {
+                aListeners.push( listener );
+            }
+        },
+        b: {
+            link: bLink,
+            listen: function ( listener ) {
+                bListeners.push( listener );
+            }
+        }
+    };
+}
+
+function getAndForgetDemanderResponse( demander ) {
+    var responseEntries = demander.getResponseHistoryEntries();
+    var responseEndMillis = entsEnd( responseEntries );
+    demander.forgetResponseBeforeResponseMillis(
+        responseEndMillis === 1 / 0 ?
+            responseEntries[
+                responseEntries.length - 1 ].startMillis :
+            responseEndMillis );
+    return responseEntries;
+}
+
+function makeTestForMakeLinkPair() {
+    var now = new Date().getTime();
+    function deferForBatching( func ) {
+        setTimeout( function () {
+            func();
+        }, 0 );
+    }
+    
+    function explicitlyIgnoreLinkDemand( globalLink ) {
+        _.arrEach( globalLink.getInDemandHistoryEntries(),
+            function ( demand ) {
+            
+            var delayMillis = demand.delayMillis;
+            _.arrEach( demand.demandDataHistory, function ( entry ) {
+                if ( entry.maybeData === null )
+                    return;
+                var data = entry.maybeData.val;
+                
+                // Respond with explicit inactivity.
+                globalLink.suspendOutResponse( delayMillis, data,
+                    entry.startMillis + delayMillis,
+                    entry.maybeEndMillis.val + delayMillis );
+            } );
+        } );
+        globalLink.forgetInDemandBeforeDemandMillis(
+            globalLink.getInPermanentUntilMillis() );
+    }
+    
+    var displayDom = _.dom( "div" );
+    
+    var pairDelayMillis = 1000;
+    var mousePosition = JSON.stringify( null );
+    _.appendDom( window, { mousemove: function ( e ) {
+        mousePosition = JSON.stringify( [ e.clientX, e.clientY ] );
+    } } );
+    var mouseHistory = new ActivityHistory().init( {
+        startMillis: now,
+        syncOnAdd: function () {
+            // Do nothing.
+        },
+        syncOnForget: function () {
+            // Do nothing.
+        }
+    } );
+    
+    var pair = makeLinkedPair( now, deferForBatching );
+    pair.a.listen( function () {
+        explicitlyIgnoreLinkDemand( pair.a.link );
+    } );
+    pair.b.listen( function () {
+        var permanentUntilMillis =
+            pair.b.link.getInPermanentUntilMillis();
+        _.arrEach( pair.b.link.getInDemandHistoryEntries(),
+            function ( demand ) {
+            
+            var delayMillis = demand.delayMillis;
+            if ( delayMillis !== pairDelayMillis )
+                return;
+            _.arrEach( demand.demandDataHistory, function ( entry ) {
+                if ( entry.maybeData === null )
+                    return;
+                var data = entry.maybeData.val;
+                
+                var endMillis = Math.min( entEnd( entry ),
+                    permanentUntilMillis );
+                if ( endMillis < entry.startMillis )
+                    return;
+                
+                mouseHistory.setData(
+                    data,
+                    entry.startMillis + delayMillis,
+                    endMillis + delayMillis );
+            } );
+        } );
+        explicitlyIgnoreLinkDemand( pair.b.link );
+    } );
+    var aDemander = pair.a.link.getNewOutDemander(
+        now, pairDelayMillis,
+        function () { // syncOnResponseAvailable
+            // Do nothing with the responses except forget them.
+            getAndForgetDemanderResponse( aDemander );
+        } );
+    
+    setInterval( function () {
+        var now = new Date().getTime();
+        
+        aDemander.setDemand( mousePosition, now, now + 20 );
+        pair.a.link.raiseOtherOutPermanentUntilMillis(
+            now + 1000000 );
+        pair.b.link.raiseOtherOutPermanentUntilMillis(
+            now + 1000000 );
+        
+        mouseHistory.forgetBeforeMillis( now );
+        _.dom( displayDom, JSON.stringify(
+            mouseHistory.getAllEntries()[ 0 ].maybeData ) );
+    }, 10 );
+    
+    var result = {};
+    result.dom = displayDom;
+    return result;
+};
+
+
+
 function UselessResource() {}
 UselessResource.prototype.init = function (
     outPermanentUntilMillis, deferForBatching, sendMessage ) {
@@ -953,13 +1161,8 @@ DispatcherResource.prototype.init = function ( makeResource,
     function promoteDemanderResponseToOutResponse(
         demander, globalLink, demandEntries ) {
         
-        var responseEntries = demander.getResponseHistoryEntries();
-        var responseEndMillis = entsEnd( responseEntries );
-        demander.forgetResponseBeforeResponseMillis(
-            responseEndMillis === 1 / 0 ?
-                responseEntries[
-                    responseEntries.length - 1 ].startMillis :
-                responseEndMillis );
+        var responseEntries =
+            getAndForgetDemanderResponse( demander );
         
         var sentMillis = responseEntries[ 0 ].startMillis;
         var demandI = 0;
