@@ -210,6 +210,22 @@ function dataIsoAssumingHashIso( a, b ) {
     return true;
 }
 
+// Log up to once every ten seconds.
+//
+// NOTE: We don't actually use this in this project, unless we're
+// debugging.
+//
+var loggedLastMillis = null;
+function sometimesLog( var_args ) {
+    var nowMillis = new Date().getTime();
+    if ( loggedLastMillis === null
+        || loggedLastMillis < nowMillis - 10 * 1000 ) {
+        
+        loggedLastMillis = nowMillis;
+        console.log.apply( console, arguments );
+    }
+}
+
 function ActivityHistory() {}
 ActivityHistory.prototype.init = function ( opts ) {
     if ( !isValidTime( opts.startMillis ) )
@@ -650,7 +666,7 @@ GlobalLink.prototype.receiveMessage = function ( message ) {
             return;
         var history = self.makeInResponsesHistory_(
             response.delayMillis,
-            response.demandData,
+            response.inputData,
             oldInPermanentUntilMillis
         );
         _.arrEach( entries, function ( entry ) {
@@ -1002,16 +1018,39 @@ function getAndForgetDemanderResponse( demander ) {
     return responseEntries;
 }
 
-function makeTestForMakeLinkPair() {
-    var now = new Date().getTime();
-    function deferForBatching( func ) {
-        setTimeout( function () {
-            func();
-        }, 0 );
-    }
-    
-    function explicitlyIgnoreLinkDemand( globalLink ) {
-        _.arrEach( globalLink.getInDemandHistoryEntries(),
+function explicitlyIgnoreLinkDemand( globalLink, opt_backlogMillis ) {
+    _.arrEach( globalLink.getInDemandHistoryEntries(),
+        function ( demand ) {
+        
+        var delayMillis = demand.delayMillis;
+        _.arrEach( demand.demandDataHistory, function ( entry ) {
+            if ( entry.maybeData === null )
+                return;
+            var data = entry.maybeData.val;
+            
+            // Respond with explicit inactivity.
+            globalLink.suspendOutResponse( delayMillis, data,
+                entry.startMillis + delayMillis,
+                entry.maybeEndMillis.val + delayMillis );
+        } );
+    } );
+    globalLink.forgetInDemandBeforeDemandMillis( Math.min(
+        globalLink.getInPermanentUntilMillis(),
+        opt_backlogMillis === void 0 ? 1 / 0 : opt_backlogMillis
+    ) );
+}
+
+function connectMouseQuery( pairHalf ) {
+    var mousePosition = JSON.stringify( null );
+    _.appendDom( window, { mousemove: function ( e ) {
+        mousePosition = JSON.stringify( [ e.clientX, e.clientY ] );
+    } } );
+    var responsesToGive = [];
+    pairHalf.listen( function () {
+        var nowMillis = new Date().getTime();
+        var permanentUntilMillis =
+            pairHalf.link.getInPermanentUntilMillis();
+        _.arrEach( pairHalf.link.getInDemandHistoryEntries(),
             function ( demand ) {
             
             var delayMillis = demand.delayMillis;
@@ -1019,15 +1058,68 @@ function makeTestForMakeLinkPair() {
                 if ( entry.maybeData === null )
                     return;
                 var data = entry.maybeData.val;
+                var json = void 0;
                 
-                // Respond with explicit inactivity.
-                globalLink.suspendOutResponse( delayMillis, data,
-                    entry.startMillis + delayMillis,
-                    entry.maybeEndMillis.val + delayMillis );
+                if ( _.isString( data ) )
+                    try { json = JSON.parse( data ); } catch ( e ) {}
+                
+                if ( true
+                    && _.isNumber( json )
+                    && json === ~~json
+                    && 1 / json !== -1 / 0
+                ) {
+                    responsesToGive.push( {
+                        delayMillis: delayMillis,
+                        demandData: data,
+                        measurementDelayMillis: json,
+                        demandStartMillis: entry.startMillis,
+                        demandEndMillis: entry.maybeEndMillis.val
+                    } );
+                } else {
+                    // We don't recognize this message. Respond with
+                    // explicit inactivity.
+                    pairHalf.link.suspendOutResponse(
+                        delayMillis,
+                        data,
+                        entry.startMillis + delayMillis,
+                        entry.maybeEndMillis.val + delayMillis );
+                }
             } );
         } );
-        globalLink.forgetInDemandBeforeDemandMillis(
-            globalLink.getInPermanentUntilMillis() );
+        pairHalf.link.forgetInDemandBeforeDemandMillis(
+            Math.min( permanentUntilMillis, nowMillis ) );
+    } );
+    setInterval( function () {
+        var nowMillis = new Date().getTime();
+        
+        responsesToGive = _.arrKeep( responsesToGive,
+            function ( rtg ) {
+            
+            var responseStartMillis =
+                nowMillis - rtg.measurementDelayMillis +
+                    rtg.delayMillis;
+            var responseEndMillis = responseStartMillis + 200;
+            
+            pairHalf.link.setOutResponse(
+                rtg.delayMillis,
+                rtg.demandData,
+                mousePosition,
+                responseStartMillis,
+                responseEndMillis
+            );
+            return responseEndMillis <
+                rtg.demandEndMillis + rtg.delayMillis;
+        } );
+        pairHalf.link.raiseOtherOutPermanentUntilMillis( nowMillis );
+    }, 10 );
+}
+
+function makeTestForDemandOverLinkPair() {
+    var now = new Date().getTime();
+    function deferForBatching( func ) {
+        setTimeout( function () {
+            func();
+        }, 0 );
     }
     
     var displayDom = _.dom( "div" );
@@ -1102,7 +1194,84 @@ function makeTestForMakeLinkPair() {
     var result = {};
     result.dom = displayDom;
     return result;
-};
+}
+
+function makeTestForResponseOverLinkPair() {
+    var now = new Date().getTime();
+    function deferForBatching( func ) {
+        setTimeout( function () {
+            func();
+        }, 0 );
+    }
+    
+    var displayDom = _.dom( "div" );
+    
+    // NOTE: Although we delay the mouse-measurement demand by two
+    // seconds, we demand the measurement at the midpoint between our
+    // demand and the response, so we actually observe a delay of only
+    // half that interval.
+    var pairDelayMillis = 2000;
+    var measurementDelayMillis = pairDelayMillis / 2;
+    var mouseHistory = new ActivityHistory().init( {
+        startMillis: now,
+        syncOnAdd: function () {
+            // Do nothing.
+        },
+        syncOnForget: function () {
+            // Do nothing.
+        }
+    } );
+    
+    var pair = makeLinkedPair( now, deferForBatching );
+    connectMouseQuery( pair.b );
+    pair.a.listen( function () {
+        explicitlyIgnoreLinkDemand( pair.a.link );
+    } );
+    var aDemander = pair.a.link.getNewOutDemander(
+        now, pairDelayMillis,
+        function () { // syncOnResponseAvailable
+            var nowMillis = new Date().getTime();
+            _.arrEach( getAndForgetDemanderResponse( aDemander ),
+                function ( entry ) {
+                
+                // Pretend we didn't get this response until the time
+                // it's actually scheduled for.
+                setTimeout( next, entry.startMillis - nowMillis );
+                function next() {
+                    mouseHistory.addEntry( {
+                        maybeData: entry.maybeData,
+                        startMillis:
+                            entry.startMillis - pairDelayMillis +
+                                measurementDelayMillis,
+                        maybeEndMillis:
+                            entry.maybeEndMillis === null ?
+                                null :
+                                { val: entry.maybeEndMillis.val
+                                    - pairDelayMillis
+                                    + measurementDelayMillis }
+                    } );
+                }
+            } );
+        } );
+    
+    setInterval( function () {
+        var nowMillis = new Date().getTime();
+        
+        aDemander.setDemand( JSON.stringify( measurementDelayMillis ),
+            nowMillis, nowMillis + 20 );
+        pair.a.link.raiseOtherOutPermanentUntilMillis(
+            nowMillis + 1000000 );
+        
+        mouseHistory.forgetBeforeMillis(
+            nowMillis - measurementDelayMillis );
+        _.dom( displayDom, JSON.stringify(
+            mouseHistory.getAllEntries()[ 0 ].maybeData ) );
+    }, 10 );
+    
+    var result = {};
+    result.dom = displayDom;
+    return result;
+}
 
 
 
@@ -1332,19 +1501,15 @@ DispatcherResource.prototype.init = function ( makeResource,
                         && data.length === 2
                         && data[ 0 ] === "passthrough"
                         && _.likeArray( data[ 1 ] )
-                        && data[ 1 ].length === 3
-                        && _.isString( data[ 1 ][ 0 ] )
-                        && _.isString( data[ 1 ][ 1 ] )
+                        && data[ 1 ].length === 2
                     ) {
                         // Send the client's demand to the appropriate
                         // resource.
                         
-                        var demander = resourceDemanders.getOrMake( [
-                            data[ 1 ][ 0 ],
-                            data[ 1 ][ 1 ]
-                        ], entry.startMillis );
+                        var demander = resourceDemanders.getOrMake(
+                            data[ 1 ][ 0 ], entry.startMillis );
                         demander.demander.setDemand(
-                            [ "passthrough", data[ 1 ][ 2 ] ],
+                            [ "passthrough", data[ 1 ][ 1 ] ],
                             entry.startMillis,
                             entry.maybeEndMillis.val
                         );

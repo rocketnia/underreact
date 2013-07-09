@@ -58,12 +58,14 @@ var _ = rocketnia.lathe;
 <script type="text/javascript" src="underreact-dynamic.js"></script>
 <script type="text/javascript">"use strict";
 _.appendDom( window, { load: function () {
-    _.appendDom( document.body, makeTestForMakeLinkPair().dom );
+    _.appendDom( document.body, makeTestForDemandOverLinkPair().dom );
+    _.appendDom( document.body,
+        makeTestForResponseOverLinkPair().dom );
 } } );
 </script>
 </head>
 <body>
-<p>Below, observe a test as the mouse moves. Don't worry, the
+<p>Below, observe two tests as the mouse moves. Don't worry, the
     one-second delay is part of the test:</p>
 </body>
 </html>
