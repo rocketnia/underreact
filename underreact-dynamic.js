@@ -1025,13 +1025,13 @@ function makeLinkedPair(
     return {
         a: {
             membrane: aMembrane,
-            listen: function ( listener ) {
+            syncOnInDemandAvailable: function ( listener ) {
                 aListeners.push( listener );
             }
         },
         b: {
             membrane: bMembrane,
-            listen: function ( listener ) {
+            syncOnInDemandAvailable: function ( listener ) {
                 bListeners.push( listener );
             }
         }
@@ -1079,7 +1079,7 @@ function connectMouseQuery( pairHalf ) {
         mousePosition = JSON.stringify( [ e.clientX, e.clientY ] );
     } } );
     var responsesToGive = [];
-    pairHalf.listen( function () {
+    pairHalf.syncOnInDemandAvailable( function () {
         var nowMillis = new Date().getTime();
         var permanentUntilMillis =
             pairHalf.membrane.getInPermanentUntilMillis();
@@ -1248,15 +1248,15 @@ function behSeq( behStep1, behStep2 ) {
             raiseEnvOtherOut();
         }
         
-        step1Pair.b.listen( function () {
+        step1Pair.b.syncOnInDemandAvailable( function () {
             promoteToEnvDemand(
                 step1Pair.b.membrane, step1OutPermanentUntilMillis );
         } );
-        step2Pair.b.listen( function () {
+        step2Pair.b.syncOnInDemandAvailable( function () {
             promoteToEnvDemand(
                 step2Pair.b.membrane, step2OutPermanentUntilMillis );
         } );
-        envPairHalf.listen( function () {
+        envPairHalf.syncOnInDemandAvailable( function () {
             var permanentUntilMillis =
                 envPairHalf.membrane.getInPermanentUntilMillis();
             _.arrEach(
@@ -1383,10 +1383,10 @@ function makeTestForDemandOverLinkedPair() {
     } );
     
     var pair = makeLinkedPair( now, deferForBatching );
-    pair.a.listen( function () {
+    pair.a.syncOnInDemandAvailable( function () {
         explicitlyIgnoreMembraneDemand( pair.a.membrane );
     } );
-    pair.b.listen( function () {
+    pair.b.syncOnInDemandAvailable( function () {
         var permanentUntilMillis =
             pair.b.membrane.getInPermanentUntilMillis();
         _.arrEach( pair.b.membrane.getInDemandHistoryEntries(),
@@ -1474,7 +1474,7 @@ function makeTestForResponseOverLinkedPair() {
     
     var pair = makeLinkedPair( now, deferForBatching );
     connectMouseQuery( pair.b );
-    pair.a.listen( function () {
+    pair.a.syncOnInDemandAvailable( function () {
         explicitlyIgnoreMembraneDemand( pair.a.membrane );
     } );
     var aDemander = pair.a.membrane.getNewOutDemander(
