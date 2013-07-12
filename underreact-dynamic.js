@@ -39,18 +39,18 @@
 // TODO: Implement persistence for resources, and perhaps implement a
 // localStorage resource to demonstrate it with.
 //
-// TODO: Implement behavior internal objects. These will typically be
-// initialized using a JavaScript function that takes multiple
-// MessageMembranes as parameters and then links them together in a
+// TODO: Implement links. These will typically be initialized using a
+// JavaScript function that takes multiple MessageMembranes as
+// parameters and then propagates their updates to each other in a
 // custom way.
 //
 // TODO: Implement behaviors, first-class values which can be composed
 // to become a larger behavior which ends up orchestrating a network
-// of MessageMembrane pairs and behavior internal objects. Behaviors
-// may have some type-system-like restrictions on how they can be
-// composed, or perhaps it would be better to separate that
-// restriction system into its own abstraction layer (and call that
-// layer "behaviors" instead of this one).
+// of MessageMembrane pairs and links. Behaviors may have some
+// type-system-like restrictions on how they can be composed, or
+// perhaps it would be better to separate that restriction system into
+// its own abstraction layer (and call that layer "behaviors" instead
+// of this one).
 //
 // TODO: Build more tests at some point. The current one tests
 // demands, but not responses.
