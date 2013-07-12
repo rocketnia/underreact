@@ -58,9 +58,10 @@ var _ = rocketnia.lathe;
 <script type="text/javascript" src="underreact-dynamic.js"></script>
 <script type="text/javascript">"use strict";
 _.appendDom( window, { load: function () {
-    _.appendDom( document.body, makeTestForDemandOverLinkPair().dom );
     _.appendDom( document.body,
-        makeTestForResponseOverLinkPair().dom );
+        makeTestForDemandOverLinkedPair().dom );
+    _.appendDom( document.body,
+        makeTestForResponseOverLinkedPair().dom );
 } } );
 </script>
 </head>

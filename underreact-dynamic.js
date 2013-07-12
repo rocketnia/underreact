@@ -41,13 +41,13 @@
 //
 // TODO: Implement behavior internal objects. These will typically be
 // initialized using a JavaScript function that takes multiple
-// GlobalLinks as parameters and then links them together in a custom
-// way.
+// MessageMembranes as parameters and then links them together in a
+// custom way.
 //
 // TODO: Implement behaviors, first-class values which can be composed
 // to become a larger behavior which ends up orchestrating a network
-// of GlobalLink pairs and behavior internal objects. Behaviors may
-// have some type-system-like restrictions on how they can be
+// of MessageMembrane pairs and behavior internal objects. Behaviors
+// may have some type-system-like restrictions on how they can be
 // composed, or perhaps it would be better to separate that
 // restriction system into its own abstraction layer (and call that
 // layer "behaviors" instead of this one).
@@ -422,8 +422,8 @@ function eachZipEnts( delayMillis, entsA, entsB, body ) {
 // The responseDataHistory should never go on forever, so that the
 // receiver can garbage-collect it once it's old enough.
 //
-function GlobalLink() {}
-GlobalLink.prototype.init = function (
+function MessageMembrane() {}
+MessageMembrane.prototype.init = function (
     outPermanentUntilMillis, deferForBatching, sendMessage,
     syncOnInDemandAvailable ) {
     
@@ -572,7 +572,9 @@ GlobalLink.prototype.init = function (
     
     return self;
 };
-GlobalLink.prototype.updateInResponseIgnoranceMillis_ = function () {
+MessageMembrane.prototype.updateInResponseIgnoranceMillis_ =
+    function () {
+    
     var self = this;
     self.inResponseIgnoranceMillis_ =
         self.otherOutPermanentUntilMillis_;
@@ -583,28 +585,28 @@ GlobalLink.prototype.updateInResponseIgnoranceMillis_ = function () {
         );
     } );
 };
-GlobalLink.prototype.scrapOutDemanders_ = function () {
+MessageMembrane.prototype.scrapOutDemanders_ = function () {
     this.outDemanders_ =
         _.arrKeep( this.outDemanders_, function ( od ) {
             return !od.isScrappable();
         } );
     this.updateInResponseIgnoranceMillis_();
 };
-GlobalLink.prototype.makeOutResponsesHistory_ = function (
+MessageMembrane.prototype.makeOutResponsesHistory_ = function (
     delayMillis, inputData, startMillis ) {
     
     return this.outResponsesByDelayAndInput_.
         getOrMake( delayMillis, null ).
         getOrMake( inputData, startMillis );
 };
-GlobalLink.prototype.makeInResponsesHistory_ = function (
+MessageMembrane.prototype.makeInResponsesHistory_ = function (
     delayMillis, inputData, startMillis ) {
     
     return this.inResponsesByDelayAndInput_.
         getOrMake( delayMillis, null ).
         getOrMake( inputData, startMillis );
 };
-GlobalLink.prototype.triggerSendMessage_ = function () {
+MessageMembrane.prototype.triggerSendMessage_ = function () {
     var self = this;
     if ( self.sendingMessage_ )
         return;
@@ -661,7 +663,7 @@ GlobalLink.prototype.triggerSendMessage_ = function () {
         } );
     } );
 };
-GlobalLink.prototype.receiveMessage = function ( message ) {
+MessageMembrane.prototype.receiveMessage = function ( message ) {
     // TODO: Validate this message.
     
     var self = this;
@@ -726,10 +728,10 @@ GlobalLink.prototype.receiveMessage = function ( message ) {
     if ( message.demands.length !== 0 )
         self.syncOnInDemandAvailable_.call( {} );
 };
-GlobalLink.prototype.getInPermanentUntilMillis = function () {
+MessageMembrane.prototype.getInPermanentUntilMillis = function () {
     return this.inPermanentUntilMillis_;
 };
-GlobalLink.prototype.getInDemandHistoryEntries = function () {
+MessageMembrane.prototype.getInDemandHistoryEntries = function () {
     // Defensively clone the Arrays.
     return _.arrMap( this.inDemands_, function ( demand ) {
         return {
@@ -743,8 +745,8 @@ GlobalLink.prototype.getInDemandHistoryEntries = function () {
 // forgetInDemandBeforeDemandMillis and
 // forgetInDemandBeforeResponseMillis. Also, see if we're actually
 // going to use forgetInDemandBeforeResponseMillis at some point.
-GlobalLink.prototype.forgetInDemandBeforeDemandMillis = function (
-    demandMillis ) {
+MessageMembrane.prototype.forgetInDemandBeforeDemandMillis =
+    function ( demandMillis ) {
     
     var actualForgetDemandMillis =
         Math.min( demandMillis, this.inPermanentUntilMillis_ );
@@ -761,8 +763,8 @@ GlobalLink.prototype.forgetInDemandBeforeDemandMillis = function (
             demandDataHistory: demand.demandDataHistory } ];
     } );
 };
-GlobalLink.prototype.forgetInDemandBeforeResponseMillis = function (
-    responseMillis ) {
+MessageMembrane.prototype.forgetInDemandBeforeResponseMillis =
+    function ( responseMillis ) {
     
     var actualForgetResponseMillis =
         Math.min( responseMillis, this.inPermanentUntilMillis_ );
@@ -781,8 +783,8 @@ GlobalLink.prototype.forgetInDemandBeforeResponseMillis = function (
             demandDataHistory: demand.demandDataHistory } ];
     } );
 };
-GlobalLink.prototype.raiseOtherOutPermanentUntilMillis = function (
-    otherOutPermanentUntilMillis ) {
+MessageMembrane.prototype.raiseOtherOutPermanentUntilMillis =
+    function ( otherOutPermanentUntilMillis ) {
     
     var self = this;
     
@@ -811,7 +813,7 @@ GlobalLink.prototype.raiseOtherOutPermanentUntilMillis = function (
 // no corresponding finishOutResponse here to complete the set. That's
 // because a finished out-response could never be garbage-collected,
 // but an outdated one can.
-GlobalLink.prototype.setOutResponse = function (
+MessageMembrane.prototype.setOutResponse = function (
     delayMillis, inDemandData,
     outResponseData, startMillis, endMillis ) {
     
@@ -820,7 +822,7 @@ GlobalLink.prototype.setOutResponse = function (
     ).setData( outResponseData, startMillis, endMillis );
     this.triggerSendMessage_();
 };
-GlobalLink.prototype.suspendOutResponse = function (
+MessageMembrane.prototype.suspendOutResponse = function (
     delayMillis, inDemandData, startMillis, endMillis ) {
     
     this.makeOutResponsesHistory_(
@@ -828,7 +830,7 @@ GlobalLink.prototype.suspendOutResponse = function (
     ).suspendData( startMillis, endMillis );
     this.triggerSendMessage_();
 };
-GlobalLink.prototype.forgetInResponses_ = function () {
+MessageMembrane.prototype.forgetInResponses_ = function () {
     var self = this;
     self.inResponsesByDelayAndInput_.asMap().each(
         function ( delayMillis, inResponsesByInput ) {
@@ -841,7 +843,7 @@ GlobalLink.prototype.forgetInResponses_ = function () {
         } );
     } );
 };
-GlobalLink.prototype.getNewOutDemander = function (
+MessageMembrane.prototype.getNewOutDemander = function (
     outPermanentUntilMillis, delayMillis, syncOnResponseAvailable ) {
     
     var self = this;
@@ -958,24 +960,24 @@ GlobalLink.prototype.getNewOutDemander = function (
 };
 
 
-// Here's the entire GlobalLink interface, for reference:
+// Here's the entire MessageMembrane interface, for reference:
 //
-// GlobalLink.prototype.init = function (
+// MessageMembrane.prototype.init = function (
 //     outPermanentUntilMillis, deferForBatching, sendMessage,
 //     syncOnInDemandAvailable )
-// GlobalLink.prototype.receiveMessage = function ( message )
-// GlobalLink.prototype.getInPermanentUntilMillis = function ()
-// GlobalLink.prototype.getInDemandHistoryEntries = function ()
-// GlobalLink.prototype.forgetInDemandBeforeResponseMillis =
+// MessageMembrane.prototype.receiveMessage = function ( message )
+// MessageMembrane.prototype.getInPermanentUntilMillis = function ()
+// MessageMembrane.prototype.getInDemandHistoryEntries = function ()
+// MessageMembrane.prototype.forgetInDemandBeforeResponseMillis =
 //     function ( responseMillis )
-// GlobalLink.prototype.raiseOtherOutPermanentUntilMillis = function (
-//     otherOutPermanentUntilMillis )
-// GlobalLink.prototype.setOutResponse = function (
+// MessageMembrane.prototype.raiseOtherOutPermanentUntilMillis =
+//     function ( otherOutPermanentUntilMillis )
+// MessageMembrane.prototype.setOutResponse = function (
 //     delayMillis, inDemandData,
 //     outResponseData, startMillis, endMillis )
-// GlobalLink.prototype.suspendOutResponse = function (
+// MessageMembrane.prototype.suspendOutResponse = function (
 //     delayMillis, inDemandData, startMillis, endMillis )
-// GlobalLink.prototype.getNewOutDemander = function (
+// MessageMembrane.prototype.getNewOutDemander = function (
 //     outPermanentUntilMillis, delayMillis, syncOnResponseAvailable
 //     ) {
 //     
@@ -997,10 +999,10 @@ function makeLinkedPair(
     outPermanentUntilMillis, deferForBatching ) {
     
     var aListeners = [];
-    var aLink = new GlobalLink().init(
+    var aMembrane = new MessageMembrane().init(
         outPermanentUntilMillis, deferForBatching,
         function ( message ) {  // sendMessage
-            bLink.receiveMessage( message );
+            bMembrane.receiveMessage( message );
         },
         function () {  // syncOnInDemandAvailable
             _.arrEach( aListeners, function ( listener ) {
@@ -1009,10 +1011,10 @@ function makeLinkedPair(
         } );
     
     var bListeners = [];
-    var bLink = new GlobalLink().init(
+    var bMembrane = new MessageMembrane().init(
         outPermanentUntilMillis, deferForBatching,
         function ( message ) {  // sendMessage
-            aLink.receiveMessage( message );
+            aMembrane.receiveMessage( message );
         },
         function () {  // syncOnInDemandAvailable
             _.arrEach( bListeners, function ( listener ) {
@@ -1022,13 +1024,13 @@ function makeLinkedPair(
     
     return {
         a: {
-            link: aLink,
+            membrane: aMembrane,
             listen: function ( listener ) {
                 aListeners.push( listener );
             }
         },
         b: {
-            link: bLink,
+            membrane: bMembrane,
             listen: function ( listener ) {
                 bListeners.push( listener );
             }
@@ -1047,8 +1049,10 @@ function getAndForgetDemanderResponse( demander ) {
     return responseEntries;
 }
 
-function explicitlyIgnoreLinkDemand( globalLink, opt_backlogMillis ) {
-    _.arrEach( globalLink.getInDemandHistoryEntries(),
+function explicitlyIgnoreMembraneDemand(
+    membrane, opt_backlogMillis ) {
+    
+    _.arrEach( membrane.getInDemandHistoryEntries(),
         function ( demand ) {
         
         var delayMillis = demand.delayMillis;
@@ -1058,13 +1062,13 @@ function explicitlyIgnoreLinkDemand( globalLink, opt_backlogMillis ) {
             var data = entry.maybeData.val;
             
             // Respond with explicit inactivity.
-            globalLink.suspendOutResponse( delayMillis, data,
+            membrane.suspendOutResponse( delayMillis, data,
                 entry.startMillis + delayMillis,
                 entry.maybeEndMillis.val + delayMillis );
         } );
     } );
-    globalLink.forgetInDemandBeforeDemandMillis( Math.min(
-        globalLink.getInPermanentUntilMillis(),
+    membrane.forgetInDemandBeforeDemandMillis( Math.min(
+        membrane.getInPermanentUntilMillis(),
         opt_backlogMillis === void 0 ? 1 / 0 : opt_backlogMillis
     ) );
 }
@@ -1078,8 +1082,8 @@ function connectMouseQuery( pairHalf ) {
     pairHalf.listen( function () {
         var nowMillis = new Date().getTime();
         var permanentUntilMillis =
-            pairHalf.link.getInPermanentUntilMillis();
-        _.arrEach( pairHalf.link.getInDemandHistoryEntries(),
+            pairHalf.membrane.getInPermanentUntilMillis();
+        _.arrEach( pairHalf.membrane.getInDemandHistoryEntries(),
             function ( demand ) {
             
             var delayMillis = demand.delayMillis;
@@ -1107,7 +1111,7 @@ function connectMouseQuery( pairHalf ) {
                 } else {
                     // We don't recognize this message. Respond with
                     // explicit inactivity.
-                    pairHalf.link.suspendOutResponse(
+                    pairHalf.membrane.suspendOutResponse(
                         delayMillis,
                         data,
                         entry.startMillis + delayMillis,
@@ -1115,7 +1119,7 @@ function connectMouseQuery( pairHalf ) {
                 }
             } );
         } );
-        pairHalf.link.forgetInDemandBeforeDemandMillis(
+        pairHalf.membrane.forgetInDemandBeforeDemandMillis(
             Math.min( permanentUntilMillis, nowMillis ) );
     } );
     // TODO: Keep tuning these constants based on the interval
@@ -1135,7 +1139,7 @@ function connectMouseQuery( pairHalf ) {
             var responseEndMillis =
                 responseStartMillis + stabilityMillis;
             
-            pairHalf.link.setOutResponse(
+            pairHalf.membrane.setOutResponse(
                 rtg.delayMillis,
                 rtg.demandData,
                 mousePosition,
@@ -1145,12 +1149,13 @@ function connectMouseQuery( pairHalf ) {
             return responseEndMillis <
                 rtg.demandEndMillis + rtg.delayMillis;
         } );
-        pairHalf.link.raiseOtherOutPermanentUntilMillis( nowMillis );
+        pairHalf.membrane.raiseOtherOutPermanentUntilMillis(
+            nowMillis );
     }, intervalMillis );
 }
 
 function promoteDemanderResponseToOutResponse(
-    delayMillis, demander, globalLink ) {
+    delayMillis, demander, membrane ) {
     
     _.arrEach( getAndForgetDemanderResponse( demander ),
         function ( entry ) {
@@ -1158,13 +1163,13 @@ function promoteDemanderResponseToOutResponse(
         if ( entry.maybeData === null )
             ;  // Do nothing.
         else if ( entry.maybeData.val.length === 1 )
-            globalLink.suspendOutResponse(
+            membrane.suspendOutResponse(
                 delayMillis,
                 entry.maybeData.val[ 0 ],
                 entry.startMillis,
                 entry.maybeEndMillis.val );
         else
-            globalLink.setOutResponse(
+            membrane.setOutResponse(
                 delayMillis,
                 entry.maybeData.val[ 0 ],
                 entry.maybeData.val[ 1 ],
@@ -1197,7 +1202,7 @@ function behSeq( behStep1, behStep2 ) {
         var prevEnvPermanentUntilMillis = outPermanentUntilMillis;
         
         function raiseEnvOtherOut() {
-            envPairHalf.link.raiseOtherOutPermanentUntilMillis(
+            envPairHalf.membrane.raiseOtherOutPermanentUntilMillis(
                 Math.min(
                     step1OutPermanentUntilMillis.val,
                     step2OutPermanentUntilMillis.val,
@@ -1206,17 +1211,17 @@ function behSeq( behStep1, behStep2 ) {
         }
         
         function promoteToEnvDemand(
-            sourceLink, prevPermanentUntilMillis ) {
+            sourceMembrane, prevPermanentUntilMillis ) {
             
-            _.arrEach( sourceLink.getInDemandHistoryEntries(),
+            _.arrEach( sourceMembrane.getInDemandHistoryEntries(),
                 function ( demand ) {
                 
                 var delayMillis = demand.delayMillis;
-                var demander = envPairHalf.link.getNewOutDemander(
+                var demander = envPairHalf.membrane.getNewOutDemander(
                     prevPermanentUntilMillis.val, delayMillis,
                     function () {  // syncOnResponseAvailable
                         promoteDemanderResponseToOutResponse(
-                            delayMillis, demander, sourceLink );
+                            delayMillis, demander, sourceMembrane );
                     } );
                 _.arrEach( demand.demandDataHistory,
                     function ( entry ) {
@@ -1234,8 +1239,8 @@ function behSeq( behStep1, behStep2 ) {
                 } );
             } );
             prevPermanentUntilMillis.val =
-                sourceLink.getInPermanentUntilMillis();
-            envPairHalf.link.forgetInDemandBeforeDemandMillis(
+                sourceMembrane.getInPermanentUntilMillis();
+            envPairHalf.membrane.forgetInDemandBeforeDemandMillis(
                 Math.min(
                     step1OutPermanentUntilMillis.val,
                     step2OutPermanentUntilMillis.val
@@ -1245,22 +1250,25 @@ function behSeq( behStep1, behStep2 ) {
         
         step1Pair.b.listen( function () {
             promoteToEnvDemand(
-                step1Pair.b.link, step1OutPermanentUntilMillis );
+                step1Pair.b.membrane, step1OutPermanentUntilMillis );
         } );
         step2Pair.b.listen( function () {
             promoteToEnvDemand(
-                step2Pair.b.link, step2OutPermanentUntilMillis );
+                step2Pair.b.membrane, step2OutPermanentUntilMillis );
         } );
         envPairHalf.listen( function () {
             var permanentUntilMillis =
-                envPairHalf.link.getInPermanentUntilMillis();
-            _.arrEach( envPairHalf.link.getInDemandHistoryEntries(),
+                envPairHalf.membrane.getInPermanentUntilMillis();
+            _.arrEach(
+                envPairHalf.membrane.getInDemandHistoryEntries(),
                 function ( demand ) {
                 
                 var delayMillis = demand.delayMillis;
                 if ( delayMillis !== result.delayMillis )
                     return;
-                var demander1 = step1Pair.b.link.getNewOutDemander(
+                var demander1 =
+                    step1Pair.b.membrane.getNewOutDemander(
+                    
                     prevEnvPermanentUntilMillis,
                     behStep1.delayMillis,
                     function () {  // syncOnResponseAvailable
@@ -1283,7 +1291,9 @@ function behSeq( behStep1, behStep2 ) {
                                     entry.maybeEndMillis.val );
                         } );
                     } );
-                var demander2 = step2Pair.b.link.getNewOutDemander(
+                var demander2 =
+                    step2Pair.b.membrane.getNewOutDemander(
+                    
                     prevEnvPermanentUntilMillis +
                         behStep1.delayMillis,
                     behStep2.delayMillis,
@@ -1304,13 +1314,14 @@ function behSeq( behStep1, behStep2 ) {
                                 ;  // Do nothing.
                             else if (
                                 maybeResponseData.val.length === 1 )
-                                envPairHalf.link.suspendOutResponse(
-                                    result.delayMillis,
-                                    maybeDemandData.val,
-                                    startMillis,
-                                    maybeEndMillis );
+                                envPairHalf.membrane.
+                                    suspendOutResponse(
+                                        result.delayMillis,
+                                        maybeDemandData.val,
+                                        startMillis,
+                                        maybeEndMillis );
                             else
-                                envPairHalf.link.setOutResponse(
+                                envPairHalf.membrane.setOutResponse(
                                     result.delayMillis,
                                     maybeDemandData.val,
                                     maybeResponseData.val[ 1 ],
@@ -1334,19 +1345,19 @@ function behSeq( behStep1, behStep2 ) {
                 } );
             } );
             prevEnvPermanentUntilMillis =
-                envPairHalf.link.getInPermanentUntilMillis();
-            stepPair1.b.link.raiseOtherOutPermanentUntilMillis(
+                envPairHalf.membrane.getInPermanentUntilMillis();
+            stepPair1.b.membrane.raiseOtherOutPermanentUntilMillis(
                 prevEnvPermanentUntilMillis );
-            stepPair2.b.link.raiseOtherOutPermanentUntilMillis(
+            stepPair2.b.membrane.raiseOtherOutPermanentUntilMillis(
                 prevEnvPermanentUntilMillis + behStep1.delayMillis );
-            explicitlyIgnoreLinkDemand( envPairHalf.link );
+            explicitlyIgnoreMembraneDemand( envPairHalf.membrane );
             raiseEnvOtherOut();
         } );
     };
     return result;
 }
 
-function makeTestForDemandOverLinkPair() {
+function makeTestForDemandOverLinkedPair() {
     var now = new Date().getTime();
     function deferForBatching( func ) {
         setTimeout( function () {
@@ -1373,12 +1384,12 @@ function makeTestForDemandOverLinkPair() {
     
     var pair = makeLinkedPair( now, deferForBatching );
     pair.a.listen( function () {
-        explicitlyIgnoreLinkDemand( pair.a.link );
+        explicitlyIgnoreMembraneDemand( pair.a.membrane );
     } );
     pair.b.listen( function () {
         var permanentUntilMillis =
-            pair.b.link.getInPermanentUntilMillis();
-        _.arrEach( pair.b.link.getInDemandHistoryEntries(),
+            pair.b.membrane.getInPermanentUntilMillis();
+        _.arrEach( pair.b.membrane.getInDemandHistoryEntries(),
             function ( demand ) {
             
             var delayMillis = demand.delayMillis;
@@ -1400,9 +1411,9 @@ function makeTestForDemandOverLinkPair() {
                     endMillis + delayMillis );
             } );
         } );
-        explicitlyIgnoreLinkDemand( pair.b.link );
+        explicitlyIgnoreMembraneDemand( pair.b.membrane );
     } );
-    var aDemander = pair.a.link.getNewOutDemander(
+    var aDemander = pair.a.membrane.getNewOutDemander(
         now, pairDelayMillis,
         function () { // syncOnResponseAvailable
             // Do nothing with the responses except forget them.
@@ -1420,9 +1431,9 @@ function makeTestForDemandOverLinkPair() {
         
         aDemander.setDemand(
             mousePosition, now, now + stabilityMillis );
-        pair.a.link.raiseOtherOutPermanentUntilMillis(
+        pair.a.membrane.raiseOtherOutPermanentUntilMillis(
             now + otherOutStabilityMillis );
-        pair.b.link.raiseOtherOutPermanentUntilMillis(
+        pair.b.membrane.raiseOtherOutPermanentUntilMillis(
             now + otherOutStabilityMillis );
         
         mouseHistory.forgetBeforeMillis( now );
@@ -1435,7 +1446,7 @@ function makeTestForDemandOverLinkPair() {
     return result;
 }
 
-function makeTestForResponseOverLinkPair() {
+function makeTestForResponseOverLinkedPair() {
     var now = new Date().getTime();
     function deferForBatching( func ) {
         setTimeout( function () {
@@ -1464,9 +1475,9 @@ function makeTestForResponseOverLinkPair() {
     var pair = makeLinkedPair( now, deferForBatching );
     connectMouseQuery( pair.b );
     pair.a.listen( function () {
-        explicitlyIgnoreLinkDemand( pair.a.link );
+        explicitlyIgnoreMembraneDemand( pair.a.membrane );
     } );
-    var aDemander = pair.a.link.getNewOutDemander(
+    var aDemander = pair.a.membrane.getNewOutDemander(
         now, pairDelayMillis,
         function () { // syncOnResponseAvailable
             var nowMillis = new Date().getTime();
@@ -1508,7 +1519,7 @@ function makeTestForResponseOverLinkPair() {
         
         aDemander.setDemand( JSON.stringify( measurementDelayMillis ),
             nowMillis, nowMillis + stabilityMillis );
-        pair.a.link.raiseOtherOutPermanentUntilMillis(
+        pair.a.membrane.raiseOtherOutPermanentUntilMillis(
             nowMillis + otherOutStabilityMillis );
         
         mouseHistory.forgetBeforeMillis(
@@ -1530,12 +1541,12 @@ UselessResource.prototype.init = function (
     
     var self = this;
     
-    self.clientLink_ = new GlobalLink().init(
+    self.clientMembrane_ = new MessageMembrane().init(
         outPermanentUntilMillis, deferForBatching, sendMessage,
         function () {  // syncOnInDemandAvailable
             
             var demandEntries =
-                self.clientLink_.getInDemandHistoryEntries();
+                self.clientMembrane_.getInDemandHistoryEntries();
             
             _.arrEach( demandEntries, function ( demand ) {
                 var delayMillis = demand.delayMillis;
@@ -1555,7 +1566,7 @@ UselessResource.prototype.init = function (
                         
                         // We don't recognize this demand. Respond
                         // with explicit inactivity.
-                        self.clientLink_.suspendOutResponse(
+                        self.clientMembrane_.suspendOutResponse(
                             delayMillis,
                             data,
                             entry.startMillis + delayMillis,
@@ -1567,7 +1578,7 @@ UselessResource.prototype.init = function (
     return self;
 };
 UselessResource.prototype.receiveMessage = function ( message ) {
-    this.clientLink_.receiveMessage( message );
+    this.clientMembrane_.receiveMessage( message );
 };
 
 function DispatcherResource() {}
@@ -1589,7 +1600,7 @@ DispatcherResource.prototype.init = function ( makeResource,
         makeVal: function (
             discriminator, inAndOutPermanentUntilMillis ) {
             
-            var resourceLink = new GlobalLink().init(
+            var resourceMembrane = new MessageMembrane().init(
                 inAndOutPermanentUntilMillis, deferForBatching,
                 function ( message ) {
                     resource.receiveMessage( message );
@@ -1599,7 +1610,7 @@ DispatcherResource.prototype.init = function ( makeResource,
                     // Send the resource's demand to the client.
                     
                     _.arrEach(
-                        resourceLink.getInDemandHistoryEntries(),
+                        resourceMembrane.getInDemandHistoryEntries(),
                         function ( demand ) {
                         
                         var delayMillis = demand.delayMillis;
@@ -1607,14 +1618,16 @@ DispatcherResource.prototype.init = function ( makeResource,
                         var startMillis =
                             demandEntries[ 0 ].startMillis;
                         var demander =
-                            self.clientLink_.getNewOutDemander(
+                            self.clientMembrane_.getNewOutDemander(
                             startMillis, delayMillis,
                             function () {  // syncOnResponseAvailable
                             
                             // Send the client's response back to
                             // the resource.
                             promoteDemanderResponseToOutResponse(
-                                delayMillis, demander, resourceLink );
+                                delayMillis,
+                                demander,
+                                resourceMembrane );
                         } );
                         _.arrEach( demandEntries, function ( entry ) {
                             // TODO: See if we actually need the
@@ -1641,17 +1654,18 @@ DispatcherResource.prototype.init = function ( makeResource,
                 inAndOutPermanentUntilMillis,
                 deferForBatching,
                 function ( message ) {
-                    resourceLink.receiveMessage( message );
+                    resourceMembrane.receiveMessage( message );
                 } );
             return resource;
         }
     } );
     
-    self.clientLink_ = new GlobalLink().init(
+    self.clientMembrane_ = new MessageMembrane().init(
         outPermanentUntilMillis, deferForBatching, sendMessage,
         function () {  // syncOnInDemandAvailable
             
-            _.arrEach( self.clientLink_.getInDemandHistoryEntries(),
+            _.arrEach(
+                self.clientMembrane_.getInDemandHistoryEntries(),
                 function ( demand ) {
                 
                 var delayMillis = demand.delayMillis;
@@ -1676,7 +1690,7 @@ DispatcherResource.prototype.init = function ( makeResource,
                             promoteDemanderResponseToOutResponse(
                                 delayMillis,
                                 demander,
-                                self.clientLink_ );
+                                self.clientMembrane_ );
                         } );
                         return {
                             demander: demander,
@@ -1719,7 +1733,7 @@ DispatcherResource.prototype.init = function ( makeResource,
                         
                         // We don't recognize this demand. Respond
                         // with explicit inactivity.
-                        self.clientLink_.suspendOutResponse(
+                        self.clientMembrane_.suspendOutResponse(
                             delayMillis,
                             data,
                             entry.startMillis + delayMillis,
@@ -1737,5 +1751,5 @@ DispatcherResource.prototype.init = function ( makeResource,
     return self;
 };
 DispatcherResource.prototype.receiveMessage = function ( message ) {
-    this.clientLink_.receiveMessage( message );
+    this.clientMembrane_.receiveMessage( message );
 };
