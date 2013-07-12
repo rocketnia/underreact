@@ -356,6 +356,49 @@ ActivityHistory.prototype.finishData = function ( startMillis ) {
     } );
 };
 
+function eachZipEnts( delayMillis, entsA, entsB, body ) {
+    var startMillis =
+        Math.min( entsA[ 0 ].startMillis, entsB[ 0 ].startMillis );
+    var ai = 0, bi = 0;
+    while ( true ) {
+        while ( ai < entsA.length
+            && entEnd( entsA[ ai ] ) + delayMillis <= startMillis )
+            ai++;
+        while ( bi < entsB.length
+            && entEnd( entsB[ bi ] ) <= startMillis )
+            bi++;
+        
+        if ( !(ai < entsA.length || bi < entsB.length) )
+            break;
+        
+        var endA = 1 / 0;
+        var maybeDataA = null;
+        if ( ai < entsA.length ) {
+            var entA = entsA[ ai ];
+            if ( startMillis < entA.startMillis + delayMillis ) {
+                endA = entA.startMillis;
+            } else {
+                endA = entEnd( entA );
+                maybeDataA = entA.maybeData;
+            }
+        }
+        var endB = 1 / 0;
+        var maybeDataB = null;
+        if ( bi < entsB.length ) {
+            var entB = entsB[ bi ];
+            if ( startMillis < entB.startMillis ) {
+                endB = entB.startMillis;
+            } else {
+                endB = entEnd( entB );
+                maybeDataB = entB.maybeData;
+            }
+        }
+        
+        var endMillis = Math.min( endA + delayMillis, endB );
+        body( maybeDataA, maybeDataB, startMillis, endMillis );
+        startMillis = endMillis;
+    }
+}
 
 // This creates a managed glue layer around a two-way channel which
 // uses messages of this form:
@@ -491,50 +534,36 @@ GlobalLink.prototype.init = function (
             if ( od.getDelayMillis() !== delayMillis )
                 return;
             var demandEntries = od.getDemandHistoryEntries();
+            var demandEndMillis = entsEnd( demandEntries );
             var localResponseEndMillis =
                 entsEnd( od.getResponseHistoryEntries() );
-            var demI = 0, myResI = 0;
-            outer: while ( true ) {
-                while (
-                    entEnd( demandEntries[ demI ] ) +
-                        delayMillis <=
-                        localResponseEndMillis ) {
-                    
-                    demI++;
-                    if ( demandEntries.length <= demI )
-                        break outer;
-                }
-                while ( entEnd( myEntries[ myResI ] ) <=
-                    localResponseEndMillis ) {
-                    
-                    myResI++;
-                    if ( myEntries.length <= myResI )
-                        break outer;
-                }
+            eachZipEnts( delayMillis, demandEntries, myEntries,
+                function ( maybeDemandData, maybeMyResponseData,
+                    startMillis, endMillis ) {
                 
-                var demandEntry = demandEntries[ demI ];
-                var myResponseEntry = myEntries[ myResI ];
-                var newLocalResponseEndMillis = Math.min(
-                    entEnd( demandEntry ) + delayMillis,
-                    entEnd( myResponseEntry ) );
-                var newLocalResponseMaybeEndMillis =
-                    newLocalResponseEndMillis === 1 / 0 ? null :
-                        { val: newLocalResponseEndMillis };
+                if ( demandEndMillis <= startMillis )
+                    return;
+                if ( endMillis <= localResponseEndMillis )
+                    return;
+                
+                var maybeEndMillis =
+                    endMillis === 1 / 0 ? null : { val: endMillis };
                 var maybeLocalResponseData = null;
-                if ( demandEntry.maybeData !== null
-                    && dataIso(
-                        demandEntry.maybeData.val, inputData ) )
-                    maybeLocalResponseData =
-                        myResponseEntry.maybeData;
+                if ( maybeDemandData !== null
+                    && dataIso( maybeDemandData.val, inputData ) )
+                    maybeLocalResponseData = { val: [
+                        maybeDemandData.val
+                    ].concat(
+                        maybeMyResponseData === null ? [] :
+                            [ maybeMyResponseData.val ]
+                    ) };
                 
                 od.addResponseHistoryEntry( {
                     maybeData: maybeLocalResponseData,
-                    startMillis: localResponseEndMillis,
-                    maybeEndMillis: newLocalResponseMaybeEndMillis
+                    startMillis: startMillis,
+                    maybeEndMillis: maybeEndMillis
                 } );
-                
-                localResponseEndMillis = newLocalResponseEndMillis;
-            }
+            } );
         } );
         self.scrapOutDemanders_();
     }
@@ -1089,6 +1118,11 @@ function connectMouseQuery( pairHalf ) {
         pairHalf.link.forgetInDemandBeforeDemandMillis(
             Math.min( permanentUntilMillis, nowMillis ) );
     } );
+    // TODO: Keep tuning these constants based on the interval
+    // frequency we actually achieve, rather than the one we shoot
+    // for.
+    var intervalMillis = 100;  // 10;
+    var stabilityMillis = 500;  // 200;
     setInterval( function () {
         var nowMillis = new Date().getTime();
         
@@ -1098,7 +1132,8 @@ function connectMouseQuery( pairHalf ) {
             var responseStartMillis =
                 nowMillis - rtg.measurementDelayMillis +
                     rtg.delayMillis;
-            var responseEndMillis = responseStartMillis + 200;
+            var responseEndMillis =
+                responseStartMillis + stabilityMillis;
             
             pairHalf.link.setOutResponse(
                 rtg.delayMillis,
@@ -1111,7 +1146,204 @@ function connectMouseQuery( pairHalf ) {
                 rtg.demandEndMillis + rtg.delayMillis;
         } );
         pairHalf.link.raiseOtherOutPermanentUntilMillis( nowMillis );
-    }, 10 );
+    }, intervalMillis );
+}
+
+function promoteDemanderResponseToOutResponse(
+    delayMillis, demander, globalLink ) {
+    
+    _.arrEach( getAndForgetDemanderResponse( demander ),
+        function ( entry ) {
+        
+        if ( entry.maybeData === null )
+            ;  // Do nothing.
+        else if ( entry.maybeData.val.length === 1 )
+            globalLink.suspendOutResponse(
+                delayMillis,
+                entry.maybeData.val[ 0 ],
+                entry.startMillis,
+                entry.maybeEndMillis.val );
+        else
+            globalLink.setOutResponse(
+                delayMillis,
+                entry.maybeData.val[ 0 ],
+                entry.maybeData.val[ 1 ],
+                entry.startMillis,
+                entry.maybeEndMillis.val );
+    } );
+}
+
+if ( Math.min( 3, 2, 1 ) !== 1 )
+    throw new Error();
+
+function behSeq( behStep1, behStep2 ) {
+    var result = {};
+    result.delayMillis = behStep1.delayMillis + behStep2.delayMillis;
+    result.install = function (
+        envPairHalf, outPermanentUntilMillis, deferForBatching ) {
+        
+        var step1Pair = makeLinkedPair(
+            outPermanentUntilMillis, deferForBatching );
+        var step2Pair = makeLinkedPair(
+            outPermanentUntilMillis, deferForBatching );
+        var step1 = behStep1.install.call( {},
+            step1Pair.a, outPermanentUntilMillis, deferForBatching );
+        var step2 = behStep2.install.call( {},
+            step2Pair.a, outPermanentUntilMillis, deferForBatching );
+        var step1OutPermanentUntilMillis =
+            { val: outPermanentUntilMillis };
+        var step2OutPermanentUntilMillis =
+            { val: outPermanentUntilMillis };
+        var prevEnvPermanentUntilMillis = outPermanentUntilMillis;
+        
+        function raiseEnvOtherOut() {
+            envPairHalf.link.raiseOtherOutPermanentUntilMillis(
+                Math.min(
+                    step1OutPermanentUntilMillis.val,
+                    step2OutPermanentUntilMillis.val,
+                    prevEnvPermanentUntilMillis + result.delayMillis
+                ) );
+        }
+        
+        function promoteToEnvDemand(
+            sourceLink, prevPermanentUntilMillis ) {
+            
+            _.arrEach( sourceLink.getInDemandHistoryEntries(),
+                function ( demand ) {
+                
+                var delayMillis = demand.delayMillis;
+                var demander = envPairHalf.link.getNewOutDemander(
+                    prevPermanentUntilMillis.val, delayMillis,
+                    function () {  // syncOnResponseAvailable
+                        promoteDemanderResponseToOutResponse(
+                            delayMillis, demander, sourceLink );
+                    } );
+                _.arrEach( demand.demandDataHistory,
+                    function ( entry ) {
+                    
+                    if ( entry.maybeData !== null )
+                        demander.setDemand(
+                            entry.maybeData.val,
+                            entry.startMillis,
+                            entry.maybeEndData.val );
+                    else if ( entry.maybeEndMillis !== null )
+                        demander.suspendDemand( entry.startMillis,
+                            entry.maybeEndMillis.val );
+                    else
+                        demander.finishDemand( entry.startMillis );
+                } );
+            } );
+            prevPermanentUntilMillis.val =
+                sourceLink.getInPermanentUntilMillis();
+            envPairHalf.link.forgetInDemandBeforeDemandMillis(
+                Math.min(
+                    step1OutPermanentUntilMillis.val,
+                    step2OutPermanentUntilMillis.val
+                ) );
+            raiseEnvOtherOut();
+        }
+        
+        step1Pair.b.listen( function () {
+            promoteToEnvDemand(
+                step1Pair.b.link, step1OutPermanentUntilMillis );
+        } );
+        step2Pair.b.listen( function () {
+            promoteToEnvDemand(
+                step2Pair.b.link, step2OutPermanentUntilMillis );
+        } );
+        envPairHalf.listen( function () {
+            var permanentUntilMillis =
+                envPairHalf.link.getInPermanentUntilMillis();
+            _.arrEach( envPairHalf.link.getInDemandHistoryEntries(),
+                function ( demand ) {
+                
+                var delayMillis = demand.delayMillis;
+                if ( delayMillis !== result.delayMillis )
+                    return;
+                var demander1 = step1Pair.b.link.getNewOutDemander(
+                    prevEnvPermanentUntilMillis,
+                    behStep1.delayMillis,
+                    function () {  // syncOnResponseAvailable
+                        _.arrEach(
+                            getAndForgetDemanderResponse( demander1 ),
+                            function ( entry ) {
+                            
+                            if ( entry.maybeData === null )
+                                demander2.finishDemand(
+                                    entry.startMillis );
+                            else if (
+                                entry.maybeData.val.length === 1 )
+                                demander2.suspendDemand(
+                                    entry.startMillis,
+                                    entry.maybeEndMillis.val );
+                            else
+                                demander2.setDemand(
+                                    entry.maybeData.val[ 1 ],
+                                    entry.startMillis,
+                                    entry.maybeEndMillis.val );
+                        } );
+                    } );
+                var demander2 = step2Pair.b.link.getNewOutDemander(
+                    prevEnvPermanentUntilMillis +
+                        behStep1.delayMillis,
+                    behStep2.delayMillis,
+                    function () {  // syncOnResponseAvailable
+                        eachZipEnts(
+                            result.delayMillis,
+                            demand.demandDataHistory,
+                            getAndForgetDemanderResponse(
+                                demander2 ),
+                            function (
+                                maybeDemandData, maybeResponseData,
+                                startMillis, endMillis ) {
+                            
+                            var maybeEndMillis = endMillis === 1 / 0 ?
+                                null : { val: endMillis };
+                            
+                            if ( maybeResponseData === null )
+                                ;  // Do nothing.
+                            else if (
+                                maybeResponseData.val.length === 1 )
+                                envPairHalf.link.suspendOutResponse(
+                                    result.delayMillis,
+                                    maybeDemandData.val,
+                                    startMillis,
+                                    maybeEndMillis );
+                            else
+                                envPairHalf.link.setOutResponse(
+                                    result.delayMillis,
+                                    maybeDemandData.val,
+                                    maybeResponseData.val[ 1 ],
+                                    startMillis,
+                                    maybeEndMillis );
+                        } );
+                    } );
+                _.arrEach( demand.demandDataHistory,
+                    function ( entry ) {
+                    
+                    if ( entry.maybeData !== null )
+                        demander1.setDemand(
+                            entry.maybeData.val,
+                            entry.startMillis,
+                            entry.maybeEndData.val );
+                    else if ( entry.maybeEndMillis !== null )
+                        demander1.suspendDemand( entry.startMillis,
+                            entry.maybeEndMillis.val );
+                    else
+                        demander1.finishDemand( entry.startMillis );
+                } );
+            } );
+            prevEnvPermanentUntilMillis =
+                envPairHalf.link.getInPermanentUntilMillis();
+            stepPair1.b.link.raiseOtherOutPermanentUntilMillis(
+                prevEnvPermanentUntilMillis );
+            stepPair2.b.link.raiseOtherOutPermanentUntilMillis(
+                prevEnvPermanentUntilMillis + behStep1.delayMillis );
+            explicitlyIgnoreLinkDemand( envPairHalf.link );
+            raiseEnvOtherOut();
+        } );
+    };
+    return result;
 }
 
 function makeTestForDemandOverLinkPair() {
@@ -1177,19 +1409,26 @@ function makeTestForDemandOverLinkPair() {
             getAndForgetDemanderResponse( aDemander );
         } );
     
+    // TODO: Keep tuning these constants based on the interval
+    // frequency we actually achieve, rather than the one we shoot
+    // for.
+    var intervalMillis = 10;
+    var stabilityMillis = 500;  // 20;
+    var otherOutStabilityMillis = 1000000;
     setInterval( function () {
         var now = new Date().getTime();
         
-        aDemander.setDemand( mousePosition, now, now + 20 );
+        aDemander.setDemand(
+            mousePosition, now, now + stabilityMillis );
         pair.a.link.raiseOtherOutPermanentUntilMillis(
-            now + 1000000 );
+            now + otherOutStabilityMillis );
         pair.b.link.raiseOtherOutPermanentUntilMillis(
-            now + 1000000 );
+            now + otherOutStabilityMillis );
         
         mouseHistory.forgetBeforeMillis( now );
         _.dom( displayDom, JSON.stringify(
             mouseHistory.getAllEntries()[ 0 ].maybeData ) );
-    }, 10 );
+    }, intervalMillis );
     
     var result = {};
     result.dom = displayDom;
@@ -1239,7 +1478,11 @@ function makeTestForResponseOverLinkPair() {
                 setTimeout( next, entry.startMillis - nowMillis );
                 function next() {
                     mouseHistory.addEntry( {
-                        maybeData: entry.maybeData,
+                        maybeData:
+                            entry.maybeData === null ||
+                                entry.maybeData.val.length === 1 ?
+                                null :
+                                { val: entry.maybeData.val[ 1 ] },
                         startMillis:
                             entry.startMillis - pairDelayMillis +
                                 measurementDelayMillis,
@@ -1254,19 +1497,25 @@ function makeTestForResponseOverLinkPair() {
             } );
         } );
     
+    // TODO: Keep tuning these constants based on the interval
+    // frequency we actually achieve, rather than the one we shoot
+    // for.
+    var intervalMillis = 10;
+    var stabilityMillis = 500;  // 20;
+    var otherOutStabilityMillis = 1000000;
     setInterval( function () {
         var nowMillis = new Date().getTime();
         
         aDemander.setDemand( JSON.stringify( measurementDelayMillis ),
-            nowMillis, nowMillis + 20 );
+            nowMillis, nowMillis + stabilityMillis );
         pair.a.link.raiseOtherOutPermanentUntilMillis(
-            nowMillis + 1000000 );
+            nowMillis + otherOutStabilityMillis );
         
         mouseHistory.forgetBeforeMillis(
             nowMillis - measurementDelayMillis );
         _.dom( displayDom, JSON.stringify(
             mouseHistory.getAllEntries()[ 0 ].maybeData ) );
-    }, 10 );
+    }, intervalMillis );
     
     var result = {};
     result.dom = displayDom;
@@ -1327,56 +1576,6 @@ DispatcherResource.prototype.init = function ( makeResource,
     
     var self = this;
     
-    function promoteDemanderResponseToOutResponse(
-        demander, globalLink, demandEntries ) {
-        
-        var responseEntries =
-            getAndForgetDemanderResponse( demander );
-        
-        var sentMillis = responseEntries[ 0 ].startMillis;
-        var demandI = 0;
-        var responseI = 0;
-        outer: while ( true ) {
-            while ( entEnd( demandEntries[ demandI ] ) < sentMillis
-                ) {
-                
-                demandI++;
-                if ( demandEntries.length < demandI )
-                    break outer;
-            }
-            while ( entEnd( responseEntries[ responseI ] ) <
-                sentMillis ) {
-                
-                responseI++;
-                if ( responseEntries.length < responseI )
-                    break outer;
-            }
-            var demandEntry = demandEntries[ demandI ];
-            var responseEntry = responseEntries[ responseI ];
-            var nextSentMillis = Math.min(
-                entEnd( demandEntry ), entEnd( responseEntry ) );
-            // TODO: Put an assertion in here that says if the
-            // response has data then the demand must have had data
-            // too (or else there'd have been nothing to respond to).
-            if ( demandEntry.maybeData === null )
-                ;  // Do nothing.
-            else if ( responseEntry.maybeData === null )
-                globalLink.suspendOutResponse(
-                    delayMillis,
-                    demandEntry.maybeData.val,
-                    sentMillis,
-                    nextSentMillis );
-            else
-                globalLink.setOutResponse(
-                    delayMillis,
-                    demandEntry.maybeData.val,
-                    responseEntry.maybeData.val,
-                    sentMillis,
-                    nextSentMillis );
-            sentMillis = nextSentMillis;
-        }
-    }
-    
     var resources = new ElasticMap().init( {
         keyHash: function ( discriminator ) {
             return dataHash( discriminator );
@@ -1407,7 +1606,6 @@ DispatcherResource.prototype.init = function ( makeResource,
                         var demandEntries = demand.demandDataHistory;
                         var startMillis =
                             demandEntries[ 0 ].startMillis;
-                        var endMillis = startMillis;
                         var demander =
                             self.clientLink_.getNewOutDemander(
                             startMillis, delayMillis,
@@ -1416,8 +1614,7 @@ DispatcherResource.prototype.init = function ( makeResource,
                             // Send the client's response back to
                             // the resource.
                             promoteDemanderResponseToOutResponse(
-                                demander, resourceLink, demandEntries
-                                );
+                                delayMillis, demander, resourceLink );
                         } );
                         _.arrEach( demandEntries, function ( entry ) {
                             // TODO: See if we actually need the
@@ -1435,10 +1632,8 @@ DispatcherResource.prototype.init = function ( makeResource,
                                         entry.maybeData.val ],
                                     entry.startMillis,
                                     entry.maybeEndMillis.val );
-                            endMillis = Math.max( endMillis,
-                                entry.maybeEndMillis.val );
                         } );
-                        demander.finishDemand( endMillis );
+                        demander.finishDemand( startMillis );
                     } );
                 } );
             var resource = makeResource.call( {},
@@ -1456,10 +1651,10 @@ DispatcherResource.prototype.init = function ( makeResource,
         outPermanentUntilMillis, deferForBatching, sendMessage,
         function () {  // syncOnInDemandAvailable
             
-            var demandEntries =
-                self.clientLink_.getInDemandHistoryEntries();
-            
-            _.arrEach( demandEntries, function ( demand ) {
+            _.arrEach( self.clientLink_.getInDemandHistoryEntries(),
+                function ( demand ) {
+                
+                var delayMillis = demand.delayMillis;
                 var resourceDemanders = new ElasticMap().init( {
                     keyHash: function ( discriminator ) {
                         return dataHash( inputData );
@@ -1479,8 +1674,9 @@ DispatcherResource.prototype.init = function ( makeResource,
                             // Send the resource's response back to
                             // the client.
                             promoteDemanderResponseToOutResponse(
-                                demander, self.clientLink_,
-                                demandEntries );
+                                delayMillis,
+                                demander,
+                                self.clientLink_ );
                         } );
                         return {
                             demander: demander,
@@ -1488,7 +1684,6 @@ DispatcherResource.prototype.init = function ( makeResource,
                         };
                     }
                 } );
-                var delayMillis = demand.delayMillis;
                 _.arrEach( demand.demandDataHistory,
                     function ( entry ) {
                     
