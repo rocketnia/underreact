@@ -39,21 +39,16 @@
 // TODO: Implement persistence for resources, and perhaps implement a
 // localStorage resource to demonstrate it with.
 //
-// TODO: Implement links. These will typically be initialized using a
-// JavaScript function that takes multiple MessageMembranes as
-// parameters and then propagates their updates to each other in a
-// custom way.
+// TODO: Reimplement resources in terms of makeLinkedSigPair objects
+// instead of membranes.
 //
 // TODO: Implement behaviors, first-class values which can be composed
 // to become a larger behavior which ends up orchestrating a network
-// of MessageMembrane pairs and links. Behaviors may have some
+// of makeLinkedSigPair objects and links. Behaviors may have some
 // type-system-like restrictions on how they can be composed, or
 // perhaps it would be better to separate that restriction system into
 // its own abstraction layer (and call that layer "behaviors" instead
 // of this one).
-//
-// TODO: Build more tests at some point. The current one tests
-// demands, but not responses.
 
 
 "use strict";
@@ -995,7 +990,7 @@ MessageMembrane.prototype.getNewOutDemander = function (
 // };
 
 
-function makeLinkedPair(
+function makeLinkedMembranePair(
     outPermanentUntilMillis, deferForBatching ) {
     
     var aListeners = [];
@@ -1036,6 +1031,44 @@ function makeLinkedPair(
             }
         }
     };
+}
+
+function makeLinkedSigPair( startMillis ) {
+    
+    var listeners = [];
+    var history = new ActivityHistory().init( {
+        startMillis: startMillis,
+        syncOnAdd: function () {
+            _.arrEach( listeners, function ( listener ) {
+                listener();
+            } );
+        },
+        syncOnForget: function () {
+            // Do nothing.
+        }
+    } );
+    
+    
+    var readable = {};
+    readable.syncOnAdd = function ( listener ) {
+        listeners.push( listener );
+    };
+    readable.readEachEntry = function ( processEntry ) {
+        // NOTE: This is a convenience method.
+        readable.syncOnAdd( function () {
+            var entries = readable.history.getAllEntries();
+            readable.history.forgetBeforeMillis( entsEnd( entries ) );
+            _.arrEach( entries, function ( entry ) {
+                processEntry( entry );
+            } );
+        } );
+    };
+    readable.history = history;
+    
+    var writable = {};
+    writable.history = history;
+    
+    return { readable: readable, writable: writable };
 }
 
 function getAndForgetDemanderResponse( demander ) {
@@ -1181,15 +1214,267 @@ function promoteDemanderResponseToOutResponse(
 if ( Math.min( 3, 2, 1 ) !== 1 )
     throw new Error();
 
+function linkMouseQuery( inSig, outSig ) {
+    var mousePosition = JSON.stringify( null );
+    _.appendDom( window, { mousemove: function ( e ) {
+        mousePosition = JSON.stringify( [ e.clientX, e.clientY ] );
+    } } );
+    var responsesToGive = [];
+    inSig.readEachEntry( function ( entry ) {
+        if ( entry.maybeEndMillis.val <= entry.startMillis ) {
+            // Don't bother queuing this response-to-give.
+            return;
+        }
+        responsesToGive.push( {
+            active: entry.maybeData !== null,
+            startMillis: entry.startMillis,
+            maybeEndMillis: entry.maybeEndMillis
+        } );
+        handleInactive();
+    } );
+    function handleInactive() {
+        while ( responsesToGive.length !== 0 ) {
+            var rtg = responsesToGive[ 0 ];
+            if ( rtg.active )
+                break;
+            outSig.history.addEntry( {
+                maybeData: null,
+                startMillis: rtg.startMillis,
+                maybeEndMillis: rtg.maybeEndMillis
+            } );
+            responsesToGive.shift();
+        }
+    }
+    // TODO: Keep tuning these constants based on the interval
+    // frequency we actually achieve, rather than the one we shoot
+    // for.
+    var intervalMillis = 100;  // 10;
+    var stabilityMillis = 500;  // 200;
+    setInterval( function () {
+        var startToSendMillis = new Date().getTime();
+        var endToSendMillis = startToSendMillis + stabilityMillis;
+        
+        while ( true ) {
+            handleInactive();
+            if ( responsesToGive.length === 0 ) {
+                // TODO: We have a mouse measurement, but the program
+                // logic hasn't gotten far enough along to request it
+                // yet. See if we should store this mouse measurement
+                // and use it when the program gets to that point.
+                break;
+            }
+            if ( endToSendMillis < responsesToGive[ 0 ].startMillis )
+                break;
+            var rtg = responsesToGive.shift();
+            var thisStartToSendMillis =
+                Math.max( rtg.startMillis, startToSendMillis );
+            var thisEndToSendMillis =
+                Math.min( rtg.maybeEndMillis.val, endToSendMillis );
+            outSig.history.setData( JSON.stringify( null ),
+                rtg.startMillis, thisStartToSendMillis );
+            outSig.history.setData( mousePosition,
+                thisStartToSendMillis, thisEndToSendMillis );
+            if ( endToSendMillis < rtg.maybeEndMillis.val ) {
+                responsesToGive.unshift( {
+                    active: true,
+                    startMillis: endToSendMillis,
+                    maybeEndMillis: rtg.maybeEndMillis
+                } );
+                break;
+            }
+        }
+    }, intervalMillis );
+}
+function linkDomDiagnostic( inSig, outSig ) {
+    var display = _.dom( "div", JSON.stringify( null ) );
+    var displayedMillis = -1 / 0;
+    inSig.readEachEntry( function ( entry ) {
+        
+        setTimeout( function () {
+            
+            // In case the setTimeout calls get out of order, don't
+            // display this value.
+            if ( entry.startMillis < displayedMillis )
+                return;
+            displayedMillis = entry.startMillis;
+            
+            _.dom( display, JSON.stringify( entry.maybeData ) );
+            
+        }, entry.startMillis - new Date().getTime() );
+        
+        outSig.history.addEntry( entry );
+    } );
+    return { dom: display };
+}
+function linkDup( inSig, outSigA, outSigB ) {
+    inSig.readEachEntry( function ( entry ) {
+        outSigA.history.addEntry( entry );
+        outSigB.history.addEntry( entry );
+    } );
+}
+function linkFst( inSigUsed, inSigUnused, outSig ) {
+    inSigUsed.readEachEntry( function ( entry ) {
+        outSig.history.addEntry( entry );
+    } );
+    inSigUnused.readEachEntry( function ( entry ) {
+        // Do nothing.
+    } );
+}
+function linkMerge( inSigA, inSigB, outSig ) {
+    inSigA.readEachEntry( function ( entry ) {
+        outSig.history.addEntry( entry );
+    } );
+    inSigB.readEachEntry( function ( entry ) {
+        outSig.history.addEntry( entry );
+    } );
+}
+function linkInl( inSig, outSigUseful, outSigUseless ) {
+    inSig.readEachEntry( function ( entry ) {
+        outSigUseful.history.addEntry( entry );
+        outSigUseless.history.addEntry( {
+            maybeData: null,
+            startMillis: entry.startMillis,
+            maybeEndMillis: entry.maybeEndMillis
+        } );
+    } );
+}
+function linkFmap( func, inSig, outSig ) {
+    inSig.readEachEntry( function ( entry ) {
+        outSig.history.addEntry( {
+            maybeData: entry.maybeData === null ? null :
+                { val: func( entry.maybeData.val ) },
+            startMillis: entry.startMillis,
+            maybeEndMillis: entry.maybeEndMillis
+        } );
+    } );
+}
+function linkSplit( inSig, outSigLeft, outSigRight ) {
+    // NOTE: This exhibits duration coupling as long as all the
+    // inbound values are of the form [ "<", _ ] or [ ">", _ ]. Its
+    // behavior in other cases is unsafe. Specifically, it results in
+    // inactivity for both outbound branches.
+    inSig.readEachEntry( function ( entry ) {
+        var direction = null;
+        if ( entry.maybeData !== null
+            && _.likeArray( entry.maybeData.val )
+            && entry.maybeData.val.length === 2 )
+            direction = entry.maybeData.val[ 0 ];
+        outSigLeft.history.addEntry( {
+            maybeData: direction === "<" ?
+                { val: entry.maybeData.val[ 1 ] } : null,
+            startMillis: entry.startMillis,
+            maybeEndMillis: entry.maybeEndMillis
+        } );
+        outSigRight.history.addEntry( {
+            maybeData: direction === ">" ?
+                { val: entry.maybeData.val[ 1 ] } : null,
+            startMillis: entry.startMillis,
+            maybeEndMillis: entry.maybeEndMillis
+        } );
+    } );
+}
+function linkZip( inSigFirst, inSigSecond, outSig ) {
+    // NOTE: This exhibits duration coupling as long as both inbound
+    // signals have the same activity profile (i.e. the same periods
+    // of activity and inactivity). Its behavior in other cases is
+    // unsafe. Specifically, it results in inactivity for the outbound
+    // branch.
+    var entriesFirst = [];
+    var entriesSecond = [];
+    inSigFirst.readEachEntry( function ( entry ) {
+        entriesFirst.push( entry );
+        sendOut();
+    } );
+    inSigSecond.readEachEntry( function ( entry ) {
+        entriesSecond.push( entry );
+        sendOut();
+    } );
+    function sendOut() {
+        if ( entriesFirst.length === 0 || entriesSecond.length === 0 )
+            return;
+        var endFirstMillis = entsEnd( entriesFirst );
+        var endSecondMillis = entsEnd( entriesSecond );
+        var endToSendMillis =
+            Math.min( endFirstMillis, endSecondMillis );
+        eachZipEnts( 0, entriesFirst, entriesSecond,
+            function ( maybeFirstData, maybeSecondData,
+                startMillis, endMillis ) {
+            
+            if ( endToSendMillis <= startMillis )
+                return;
+            var thisEndToSendMillis =
+                Math.min( endToSendMillis, endMillis );
+            
+            outSig.history.addEntry( {
+                maybeData:
+                    maybeFirstData === null ? null :
+                    maybeSecondData === null ? null :
+                        { val: [
+                            maybeFirstData.val,
+                            maybeSecondData.val
+                        ] },
+                startMillis: startMillis,
+                maybeEndMillis: thisEndToSendMillis === 1 / 0 ?
+                    null : { val: thisEndToSendMillis }
+            } );
+        } );
+        while ( entEnd( entriesFirst[ 0 ] ) <= endToSendMillis )
+            entriesFirst.shift();
+        while ( entEnd( entriesSecond[ 0 ] ) <= endToSendMillis )
+            entriesSecond.shift();
+    }
+}
+function linkDelay( delayMillis, inSig, outSig ) {
+    if ( !isValidDuration( delayMillis ) )
+        throw new Error();
+    inSig.readEachEntry( function ( entry ) {
+        outSig.history.addEntry( {
+            maybeData: entry.maybeData,
+            startMillis: entry.startMillis + delayMillis,
+            maybeEndMillis: entry.maybeEndMillis === null ? null :
+                { val: entry.maybeEndMillis.val + delayMillis }
+        } );
+    } );
+}
+// TODO: Implement a behavior layer that uses axiomatic operations
+// like these featured in Sirea's readme:
+//
+// (>>>) :: Category cat => cat a b -> cat b c -> cat a c
+// bdup :: (BProd b) => b x (x :&: x)
+// bfst :: (BProd b) => b (x :&: y) x
+// bmerge :: (BSum b) => b (x :|: x) x
+// binl :: (BSum b) => b x (x :|: y)
+// bdisjoin :: (BDisjoin b, SigInP p x) =>
+//   b (x :&: ((S p () :&: y) :|: z)) ((x :&: y) :|: (x :&: z))
+// bfmap :: (BFmap b) => (x -> y) -> b (S p x) (S p y)
+// bsplit :: (BSplit b)=> b (S p (Either x y)) (S p x :|: S p y)
+//
+// bzap :: (BZip b)  => b (S p (x->y) :&: S p x) (S p y)
+// bzipWith fn = bfirst (bfmap fn) >>> bzap
+// bzip = bzipWith (,)
+//
+// beval :: (BDynamic b b', SigInP p x) =>
+//   DT -> b (S p (b' x y) :&: x) (y :|: S p ())
+// bcross :: (BCross b, Partition p, Partition p') => b (S p0 x) (S pf x)
+// bdelay :: (BDelay b) => DT -> b x x
+// bsynch :: (BDelay b) => b x x
+//
+// Sirea also has some tools for managing the state of lazy evaluation
+// thunks, but this implementation manages only eager, serializable
+// data, so they're not as relevant here.
+
+// TODO: Rethink this. Behaviors probably need to use
+// makeLinkedSigPair() halves rather than makeLinkedMembranePair()
+// halves.
 function behSeq( behStep1, behStep2 ) {
     var result = {};
     result.delayMillis = behStep1.delayMillis + behStep2.delayMillis;
     result.install = function (
         envPairHalf, outPermanentUntilMillis, deferForBatching ) {
         
-        var step1Pair = makeLinkedPair(
+        var step1Pair = makeLinkedMembranePair(
             outPermanentUntilMillis, deferForBatching );
-        var step2Pair = makeLinkedPair(
+        var step2Pair = makeLinkedMembranePair(
             outPermanentUntilMillis, deferForBatching );
         var step1 = behStep1.install.call( {},
             step1Pair.a, outPermanentUntilMillis, deferForBatching );
@@ -1382,7 +1667,7 @@ function makeTestForDemandOverLinkedPair() {
         }
     } );
     
-    var pair = makeLinkedPair( now, deferForBatching );
+    var pair = makeLinkedMembranePair( now, deferForBatching );
     pair.a.syncOnInDemandAvailable( function () {
         explicitlyIgnoreMembraneDemand( pair.a.membrane );
     } );
@@ -1472,7 +1757,7 @@ function makeTestForResponseOverLinkedPair() {
         }
     } );
     
-    var pair = makeLinkedPair( now, deferForBatching );
+    var pair = makeLinkedMembranePair( now, deferForBatching );
     connectMouseQuery( pair.b );
     pair.a.syncOnInDemandAvailable( function () {
         explicitlyIgnoreMembraneDemand( pair.a.membrane );
@@ -1533,6 +1818,44 @@ function makeTestForResponseOverLinkedPair() {
     return result;
 }
 
+function makeTestForLinkedSigPair() {
+    // NOTE: Although we delay the mouse-measurement demand by two
+    // seconds, we demand the measurement at the midpoint between our
+    // demand and the response, so we actually observe a delay of only
+    // half that interval.
+    var mouseDelayMillis = 2000;
+    var measurementDelayMillis = mouseDelayMillis / 2;
+    
+    var nowMillis = new Date().getTime();
+    var step1 = makeLinkedSigPair( nowMillis );
+    var step2 = makeLinkedSigPair( nowMillis );
+    var step3 = makeLinkedSigPair( nowMillis );
+    var step4 = makeLinkedSigPair( nowMillis );
+    var step5 = makeLinkedSigPair( nowMillis );
+    linkDelay( measurementDelayMillis,
+        step1.readable, step2.writable );
+    linkMouseQuery( step2.readable, step3.writable );
+    linkDelay( mouseDelayMillis - measurementDelayMillis,
+        step3.readable, step4.writable );
+    var display = linkDomDiagnostic( step4.readable, step5.writable );
+    step5.readable.readEachEntry( function ( entry ) {
+        // Do nothing.
+    } );
+    
+    // TODO: Keep tuning these constants based on the interval
+    // frequency we actually achieve, rather than the one we shoot
+    // for.
+    var intervalMillis = 10;
+    var stabilityMillis = 500;  // 20;
+    setInterval( function () {
+        var nowMillis = new Date().getTime();
+        step1.writable.history.setData(
+            JSON.stringify( measurementDelayMillis ),
+            nowMillis, nowMillis + stabilityMillis );
+    }, intervalMillis );
+    
+    return { dom: display.dom };
+}
 
 
 function UselessResource() {}
