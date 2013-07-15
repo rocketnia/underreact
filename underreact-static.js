@@ -155,8 +155,8 @@ function behId( type ) {
     result.outType = type;
     result.install = function ( startMillis, inSigs, outSigs ) {
         eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
-            var inSig = get( inSigs ).linkInfo;
-            var outSig = get( outSigs ).linkInfo;
+            var inSig = get( inSigs ).leafInfo;
+            var outSig = get( outSigs ).leafInfo;
             inSig.readEachEntry( function ( entry ) {
                 outSig.history.addEntry( entry );
             } );
@@ -179,14 +179,12 @@ function behSeq( behOne, behTwo ) {
             mapTypeLeafInfo( behOne.outType, function ( ignored ) {
                 return makeLinkedSigPair( startMillis );
             } );
-        var writables =
-            mapTypeLeafInfo( behOne.outType, function ( pair ) {
-                return pair.writable;
-            } );
-        var readables =
-            mapTypeLeafInfo( behOne.outType, function ( pair ) {
-                return pair.readable;
-            } );
+        var writables = mapTypeLeafInfo( pairs, function ( pair ) {
+            return pair.writable;
+        } );
+        var readables = mapTypeLeafInfo( pairs, function ( pair ) {
+            return pair.readable;
+        } );
         
         behOne.install( startMillis, inSigs, writables );
         behTwo.install( startMillis, readables, outSigs );
@@ -194,7 +192,7 @@ function behSeq( behOne, behTwo ) {
     return result;
 }
 function behSeqs( first, var_args ) {
-    return _.arrFoldl( first, _.cut( arguments, 1 ),
+    return _.arrFoldl( first, _.arrCut( arguments, 1 ),
         function ( a, b ) {
             return behSeq( a, b );
         } );
@@ -268,9 +266,9 @@ function behDup( type ) {
     result.outType = typeTimes( type, type );
     result.install = function ( startMillis, inSigs, outSigs ) {
         eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
-            var inSig = get( inSigs ).linkInfo;
-            var outSigFirst = get( outSigs.first ).linkInfo;
-            var outSigSecond = get( outSigs.second ).linkInfo;
+            var inSig = get( inSigs ).leafInfo;
+            var outSigFirst = get( outSigs.first ).leafInfo;
+            var outSigSecond = get( outSigs.second ).leafInfo;
             inSig.readEachEntry( function ( entry ) {
                 outSigFirst.history.addEntry( entry );
                 outSigSecond.history.addEntry( entry );
@@ -285,7 +283,7 @@ function behDrop( type ) {
     result.outType = typeOne();
     result.install = function ( startMillis, inSigs, outSigs ) {
         eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
-            var inSig = get( inSigs ).linkInfo;
+            var inSig = get( inSigs ).leafInfo;
             inSig.readEachEntry( function ( entry ) {
                 // Do nothing.
             } );
@@ -468,9 +466,9 @@ function behMerge( type ) {
     result.outType = type;
     result.install = function ( startMillis, inSigs, outSigs ) {
         eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
-            var inSigLeft = get( inSigs.left ).linkInfo;
-            var inSigRight = get( inSigs.right ).linkInfo;
-            var outSig = get( outSigs ).linkInfo;
+            var inSigLeft = get( inSigs.left ).leafInfo;
+            var inSigRight = get( inSigs.right ).leafInfo;
+            var outSig = get( outSigs ).leafInfo;
             var leftPending = [];
             var rightPending = [];
             inSigLeft.readEachEntry( function ( entry ) {
@@ -516,7 +514,7 @@ function behVacuous( type ) {
     result.outType = type;
     result.install = function ( startMillis, inSigs, outSigs ) {
         eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
-            var outSig = get( inSigs ).linkInfo;
+            var outSig = get( inSigs ).leafInfo;
             outSig.history.finishData( startMillis );
         } );
     };
@@ -638,9 +636,9 @@ function behDisjoin( branchType, leftType, rightType ) {
             } );
         }
         eachTypeAtomNodeZipper( branchType, _.idfn, function ( get ) {
-            var inSig = get( inSigs.first ).linkInfo;
-            var outSigLeft = get( outSigs.left.first ).linkInfo;
-            var outSigRight = get( outSigs.right.first ).linkInfo;
+            var inSig = get( inSigs.first ).leafInfo;
+            var outSigLeft = get( outSigs.left.first ).leafInfo;
+            var outSigRight = get( outSigs.right.first ).leafInfo;
             var offsetMillis = get( branchType ).offsetMillis;
             
             var bin = getBin( offsetMillis );
@@ -668,8 +666,8 @@ function behDisjoin( branchType, leftType, rightType ) {
         
         function eachOnOneSide( condition, type, inSigs, outSigs ) {
             eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
-                var inSig = get( inSigs ).linkInfo;
-                var outSig = get( outSigs ).linkInfo;
+                var inSig = get( inSigs ).leafInfo;
+                var outSig = get( outSigs ).leafInfo;
                 var offsetMillis = get( branchType ).offsetMillis;
                 
                 var bin = getBin( offsetMillis );
@@ -801,8 +799,8 @@ function behDelay( delayMillis, type ) {
     result.outType = typePlusOffsetMillis( type, delayMillis );
     result.install = function ( startMillis, inSigs, outSigs ) {
         eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
-            var inSig = get( inSigs ).linkInfo;
-            var outSig = get( outSigs ).linkInfo;
+            var inSig = get( inSigs ).leafInfo;
+            var outSig = get( outSigs ).leafInfo;
             inSig.readEachEntry( function ( entry ) {
                 outSig.history.addEntry( {
                     maybeData: entry.maybeData,
@@ -823,8 +821,8 @@ function behFmap( func ) {
     result.inType = typeAtom( 0, null );
     result.outType = typeAtom( 0, null );
     result.install = function ( startMillis, inSigs, outSigs ) {
-        var inSig = inSigs.linkInfo;
-        var outSig = outSigs.linkInfo;
+        var inSig = inSigs.leafInfo;
+        var outSig = outSigs.leafInfo;
         inSig.readEachEntry( function ( entry ) {
             outSig.history.addEntry( {
                 maybeData: entry.maybeData === null ? null :
@@ -845,9 +843,9 @@ function behSplit() {
     result.outType =
         typePlus( typeAtom( 0, null ), typeAtom( 0, null ) );
     result.install = function ( startMillis, inSigs, outSigs ) {
-        var inSig = inSigs.linkInfo;
-        var outSigLeft = outSigs.left.linkInfo;
-        var outSigRight = outSigs.right.linkInfo;
+        var inSig = inSigs.leafInfo;
+        var outSigLeft = outSigs.left.leafInfo;
+        var outSigRight = outSigs.right.leafInfo;
         inSig.readEachEntry( function ( entry ) {
             var direction = null;
             if ( entry.maybeData !== null
@@ -879,9 +877,9 @@ function behZip() {
         typeTimes( typeAtom( 0, null ), typeAtom( 0, null ) );
     result.outType = typeAtom( 0, null );
     result.install = function ( startMillis, inSigs, outSigs ) {
-        var inSigFirst = inSigs.first.linkInfo;
-        var inSigSecond = inSigs.second.linkInfo;
-        var outSig = outSigs.linkInfo;
+        var inSigFirst = inSigs.first.leafInfo;
+        var inSigSecond = inSigs.second.leafInfo;
+        var outSig = outSigs.leafInfo;
         
         var entriesFirst = [];
         var entriesSecond = [];
@@ -947,3 +945,76 @@ function behZip() {
 //   DT -> b (S p (b' x y) :&: x) (y :|: S p ())
 // bcross ::
 //   (BCross b, Partition p, Partition p') => b (S p0 x) (S pf x)
+
+
+// ===== Ad hoc side effects =========================================
+
+function behMouseQuery() {
+    var result = {};
+    result.inType = typeAtom( 0, null );
+    result.outType = typeAtom( 0, null );
+    result.install = function ( startMillis, inSigs, outSigs ) {
+        var inSig = inSigs.leafInfo;
+        var outSig = outSigs.leafInfo;
+        linkMouseQuery( inSig, outSig );
+    };
+    return result;
+}
+
+function behDomDiagnostic( syncOnLinkMetadata ) {
+    var result = {};
+    result.inType = typeAtom( 0, null );
+    result.outType = typeAtom( 0, null );
+    result.install = function ( startMillis, inSigs, outSigs ) {
+        var inSig = inSigs.leafInfo;
+        var outSig = outSigs.leafInfo;
+        syncOnLinkMetadata( linkDomDiagnostic( inSig, outSig ) );
+    };
+    return result;
+}
+
+
+// ===== Tests =======================================================
+
+function makeTestForBehaviors() {
+    // NOTE: Although we delay the mouse-measurement demand by two
+    // seconds, we demand the measurement at the midpoint between our
+    // demand and the response, so we actually observe a delay of only
+    // half that interval.
+    var mouseDelayMillis = 2000;
+    var measurementDelayMillis = mouseDelayMillis / 2;
+    
+    var dom = null;
+    
+    var nowMillis = new Date().getTime();
+    var step1 = makeLinkedSigPair( nowMillis );
+    var step2 = makeLinkedSigPair( nowMillis );
+    behSeqs(
+        behDelay( measurementDelayMillis, typeAtom( 0, null ) ),
+        behMouseQuery(),
+        behDelay( mouseDelayMillis - measurementDelayMillis,
+            typeAtom( 0, null ) ),
+        behDomDiagnostic( function ( linkMetadata ) {
+            dom = linkMetadata.dom;
+        } )
+    ).install( nowMillis,
+        typeAtom( 0, step1.readable ),
+        typeAtom( mouseDelayMillis, step2.writable ) );
+    step2.readable.readEachEntry( function ( entry ) {
+        // Do nothing.
+    } );
+    
+    // TODO: Keep tuning these constants based on the interval
+    // frequency we actually achieve, rather than the one we shoot
+    // for.
+    var intervalMillis = 10;
+    var stabilityMillis = 500;  // 20;
+    setInterval( function () {
+        var nowMillis = new Date().getTime();
+        step1.writable.history.setData(
+            JSON.stringify( measurementDelayMillis ),
+            nowMillis, nowMillis + stabilityMillis );
+    }, intervalMillis );
+    
+    return { dom: dom };
+}
