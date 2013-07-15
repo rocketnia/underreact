@@ -1,6 +1,9 @@
 function typeAtom( offsetMillis, leafInfo ) {
-    // NOTE: The leafInfo isn't actually part of the type, but we use
-    // it to annotate the type tree with metadata.
+    if ( !isValidDuration( offsetMillis ) )
+        throw new Error();
+    // NOTE: The leafInfo isn't actually part of the type for equality
+    // purposes, but we use it to annotate the type tree with
+    // metadata.
     return { op: "atom",
         offsetMillis: offsetMillis, leafInfo: leafInfo };
 }
@@ -18,6 +21,8 @@ function typeZero() {
 }
 
 function typesAreEqual( offsetMillis, a, b ) {
+    if ( !isValidDuration( offsetMillis ) )
+        throw new Error();
     var typesToCompare = [ { a: a, b: b } ];
     while ( typesToCompare.length !== 0 ) {
         var types = typesToCompare.shift();
@@ -134,6 +139,8 @@ function eachTypeAtomNodeZipper( type, zipContinuation, body ) {
 }
 
 function typePlusOffsetMillis( type, offsetMillis ) {
+    if ( !isValidDuration( offsetMillis ) )
+        throw new Error();
     return mapTypeAtomNodes( type, function ( type ) {
         return typeAtom(
             type.offsetMillis + offsetMillis, type.leafInfo );
@@ -794,6 +801,8 @@ function behDisjoin( branchType, leftType, rightType ) {
 // ===== Other behavior operations ===================================
 
 function behDelay( delayMillis, type ) {
+    if ( !isValidDuration( delayMillis ) )
+        throw new Error();
     var result = {};
     result.inType = type;
     result.outType = typePlusOffsetMillis( type, delayMillis );
@@ -945,6 +954,10 @@ function behZip() {
 //   DT -> b (S p (b' x y) :&: x) (y :|: S p ())
 // bcross ::
 //   (BCross b, Partition p, Partition p') => b (S p0 x) (S pf x)
+//
+// Sirea also has some tools for managing the state of Haskell's lazy
+// evaluation thunks, but this implementation manages only eager,
+// serializable data, so they're not as relevant here.
 
 
 // ===== Ad hoc side effects =========================================
