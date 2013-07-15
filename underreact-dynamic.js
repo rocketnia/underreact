@@ -1258,9 +1258,22 @@ function linkMouseQuery( inSig, outSig ) {
                 // and use it when the program gets to that point.
                 break;
             }
+            
+            // If the measured interval is too early for the next
+            // requested measurement, we're done responding for now.
             if ( endToSendMillis < responsesToGive[ 0 ].startMillis )
                 break;
+            
             var rtg = responsesToGive.shift();
+            
+            // If the requested measurement is earlier than the
+            // measured interval, just apologize.
+            if ( rtg.maybeEndMillis.val < startToSendMillis ) {
+                outSig.history.setData( JSON.stringify( null ),
+                    rtg.startMillis, rtg.maybeEndMillis.val );
+                continue;
+            }
+            
             var thisStartToSendMillis =
                 Math.max( rtg.startMillis, startToSendMillis );
             var thisEndToSendMillis =
