@@ -1321,6 +1321,8 @@ function linkFst( inSigUsed, inSigUnused, outSig ) {
     } );
 }
 function linkMerge( inSigA, inSigB, outSig ) {
+    // TODO: Whoops, we need to avoid sending inactivity unless both
+    // signals are inactive at once.
     inSigA.readEachEntry( function ( entry ) {
         outSig.history.addEntry( entry );
     } );
