@@ -616,7 +616,7 @@ MessageMembrane.prototype.init = function (
                     startMillis, endMillis ) {
                 
                 // If this is part of the already-processed response,
-                // we're not started yet.
+                // we haven't started yet.
                 if ( endMillis <= localResponseEndMillis )
                     return;
                 
@@ -1548,6 +1548,8 @@ function makeTestForDemandOverLinkedPair() {
             } );
         } );
         explicitlyIgnoreMembraneDemand( pair.b.membrane );
+        pair.b.membrane.raiseOtherOutPermanentUntilMillis(
+            permanentUntilMillis );
     } );
     var aDemander = pair.a.membrane.getNewOutDemander(
         now, pairDelayMillis,
@@ -1568,8 +1570,6 @@ function makeTestForDemandOverLinkedPair() {
         aDemander.setDemand(
             mousePosition, now, now + stabilityMillis );
         pair.a.membrane.raiseOtherOutPermanentUntilMillis(
-            now + otherOutStabilityMillis );
-        pair.b.membrane.raiseOtherOutPermanentUntilMillis(
             now + otherOutStabilityMillis );
         
         mouseHistory.forgetBeforeMillis( now );
