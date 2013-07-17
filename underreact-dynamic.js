@@ -176,6 +176,21 @@ function entsEnd( entries ) {
     return entEnd( entries[ entries.length - 1 ] );
 }
 
+function entDelay( delayMillis, entry ) {
+    return {
+        maybeData: entry.maybeData,
+        startMillis: entry.startMillis + delayMillis,
+        maybeEndMillis: entry.maybeEndMillis === null ? null :
+            { val: entry.maybeEndMillis.val + delayMillis }
+    };
+}
+
+function entsDelay( delayMillis, entry ) {
+    return _.arrMap( entry, function ( entry ) {
+        return entDelay( delayMillis, entry );
+    } );
+}
+
 // TODO: See if we should support something other than nested Arrays
 // of strings as data.
 function isValidData( x ) {
@@ -387,6 +402,77 @@ function eachZipEnts( delayMillis, entsA, entsB, body ) {
     }
 }
 
+function visualizeHistoriesOnCanvas( histories, opt_opts ) {
+    var opts = _.opt( opt_opts ).or( {
+        width: 500,
+        rowHeight: 10,
+        spacerHeight: 1,
+        infinityPadMillis: 1000
+    } ).bam();
+    histories = _.arrMap( histories, function ( ents ) {
+        return ents instanceof ActivityHistory ?
+            ents.getAllEntries() : ents;
+    } );
+    
+    function arrMin( arr, func ) {
+        return _.arrFoldl( 1 / 0, arr, function ( min, item ) {
+            return Math.min( min, func( item ) );
+        } );
+    }
+    function paddedEntEnd( entry ) {
+        return entry.maybeEndMillis === null ?
+            entry.startMillis + opts.infinityPadMillis :
+            entry.maybeEndMillis.val;
+    }
+    var startMillis = arrMin( histories, function ( ents ) {
+        return arrMin( ents, function ( entry ) {
+            return entry.startMillis;
+        } );
+    } );
+    var endMillis = -arrMin( histories, function ( ents ) {
+        return arrMin( ents, function ( entry ) {
+            return -paddedEntEnd( entry );
+        } );
+    } );
+    if ( startMillis === 1 / 0 || endMillis === -1 / 0 )
+        throw new Error();
+    function millisToX( millis ) {
+        return opts.width *
+            (millis - startMillis) / (endMillis - startMillis);
+    }
+    
+    var fullHeight = histories.length * opts.rowHeight +
+        (histories.length - 1) * opts.spacerHeight;
+    var canvas = _.dom( "canvas",
+        { width: "" + opts.width, height: "" + fullHeight } );
+    var ctx = canvas.getContext( "2d" );
+    ctx.fillStyle = "#FFFFCC";
+    ctx.fillRect( 0, 0, opts.width, fullHeight );
+    _.arrEach( histories, function ( ents, i ) {
+        _.arrEach( ents, function ( entry ) {
+            if ( entry.maybeEndMillis === null ) {
+                ctx.fillStyle = "#CCFFCC";
+            } else if ( entry.maybeData === null ) {
+                ctx.fillStyle = "#CCCCFF";
+            } else {
+                ctx.fillStyle = "#000033";
+            }
+            var startX = millisToX( entry.startMillis );
+            ctx.fillRect(
+                startX,
+                i * opts.rowHeight + i * opts.spacerHeight,
+                millisToX( paddedEntEnd( entry ) ) - startX,
+                opts.rowHeight
+            );
+        } );
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(
+            0, (i + 1) * opts.rowHeight + i * opts.spacerHeight,
+            opts.width, opts.spacerHeight );
+    } );
+    return canvas;
+}
+
 // This creates a managed glue layer around a two-way channel which
 // uses messages of this form:
 //
@@ -513,6 +599,7 @@ MessageMembrane.prototype.init = function (
     
     function onAddInResponse( delayMillis, inputData, history ) {
         var myEntries = history.getAllEntries();
+        var myEndMillis = entsEnd( myEntries );
         _.arrEach( self.outDemanders_, function ( od ) {
             
             // Update this out-demander with whatever new history
@@ -528,22 +615,62 @@ MessageMembrane.prototype.init = function (
                 function ( maybeDemandData, maybeMyResponseData,
                     startMillis, endMillis ) {
                 
+                // If this is part of the already-processed response,
+                // we're not started yet.
+                if ( endMillis <= localResponseEndMillis )
+                    return;
+                
+                // If the response is overtaking the demand, we're
+                // done.
                 if ( demandEndMillis <= startMillis )
                     return;
-                if ( endMillis <= localResponseEndMillis )
+                
+                // If the demand is overtaking the response, we're
+                // done.
+                if ( myEndMillis <= startMillis )
                     return;
                 
                 var maybeEndMillis =
                     endMillis === 1 / 0 ? null : { val: endMillis };
                 var maybeLocalResponseData = null;
                 if ( maybeDemandData !== null
-                    && dataIso( maybeDemandData.val, inputData ) )
+                    && dataIso( maybeDemandData.val, inputData ) ) {
+                    
+                    // NOTE: This is a sanity check to make sure the
+                    // membrane obeys duration coupling for demand
+                    // responses.
+                    if ( maybeMyResponseData === null ) {
+                        var offendingInterval = [ {
+                            maybeData: { val: [] },
+                            startMillis: startMillis,
+                            maybeEndMillis: { val: endMillis }
+                        } ];
+                        var delayedDemandEntries =
+                            entsDelay( delayMillis, demandEntries );
+                        // TODO: See if we can set up a debug
+                        // configuration that makes sense for this.
+                        false && _.appendDom( document.body,
+                            _.dom( "p",
+                                visualizeHistoriesOnCanvas( [
+                                    offendingInterval,
+                                    delayedDemandEntries,
+                                    myEntries
+                                ] ) )
+                        );
+                        // TODO: See if we can set up a debug
+                        // configuration that makes sense for this.
+                        console.log(
+                            "Warning: A membrane neglected to " +
+                            "respond to all its demand." );
+                    }
+                    
                     maybeLocalResponseData = { val: [
                         maybeDemandData.val
                     ].concat(
                         maybeMyResponseData === null ? [] :
                             [ maybeMyResponseData.val ]
                     ) };
+                }
                 
                 od.addResponseHistoryEntry( {
                     maybeData: maybeLocalResponseData,
@@ -1086,8 +1213,8 @@ function explicitlyIgnoreMembraneDemand(
                 return;
             var data = entry.maybeData.val;
             
-            // Respond with explicit inactivity.
-            membrane.suspendOutResponse( delayMillis, data,
+            // Respond with a dummy value.
+            membrane.setOutResponse( delayMillis, data, [],
                 entry.startMillis + delayMillis,
                 entry.maybeEndMillis.val + delayMillis );
         } );
@@ -1132,16 +1259,20 @@ function connectMouseQuery( pairHalf ) {
                     responsesToGive.push( {
                         delayMillis: delayMillis,
                         demandData: data,
-                        measurementDelayMillis: json,
-                        demandStartMillis: entry.startMillis,
-                        demandEndMillis: entry.maybeEndMillis.val
+                        postMeasurementDelayMillis:
+                            delayMillis - json,
+                        responseStartMillis:
+                            entry.startMillis + delayMillis,
+                        responseEndMillis:
+                            entry.maybeEndMillis.val + delayMillis
                     } );
                 } else {
-                    // We don't recognize this message. Respond with
-                    // explicit inactivity.
-                    pairHalf.membrane.suspendOutResponse(
+                    // We don't recognize this message. Respond with a
+                    // dummy value.
+                    pairHalf.membrane.setOutResponse(
                         delayMillis,
                         data,
+                        [],
                         entry.startMillis + delayMillis,
                         entry.maybeEndMillis.val + delayMillis );
                 }
@@ -1156,29 +1287,76 @@ function connectMouseQuery( pairHalf ) {
     var intervalMillis = 100;  // 10;
     var stabilityMillis = 500;  // 200;
     setInterval( function () {
-        var nowMillis = new Date().getTime();
+        var measurementStartMillis = new Date().getTime();
+        var measurementEndMillis =
+            measurementStartMillis + stabilityMillis;
         
-        responsesToGive = _.arrKeep( responsesToGive,
-            function ( rtg ) {
+        var forLater = [];
+        var forRightNow = [];
+        _.arrEach( responsesToGive, function ( rtg ) {
+            var pmdm = rtg.postMeasurementDelayMillis;
             
-            var responseStartMillis =
-                nowMillis - rtg.measurementDelayMillis +
-                    rtg.delayMillis;
-            var responseEndMillis =
-                responseStartMillis + stabilityMillis;
+            // If we need to give a response before this measurement,
+            // give a blank one.
+            if ( rtg.responseStartMillis <
+                measurementStartMillis + pmdm )
+                forRightNow.push( {
+                    startMillis: rtg.responseStartMillis,
+                    go: function () {
+                        pairHalf.membrane.setOutResponse(
+                            rtg.delayMillis,
+                            rtg.demandData,
+                            JSON.stringify( null ),
+                            rtg.responseStartMillis,
+                            Math.min( measurementStartMillis + pmdm,
+                                rtg.responseEndMillis ) );
+                    }
+                } );
             
-            pairHalf.membrane.setOutResponse(
-                rtg.delayMillis,
-                rtg.demandData,
-                mousePosition,
-                responseStartMillis,
-                responseEndMillis
-            );
-            return responseEndMillis <
-                rtg.demandEndMillis + rtg.delayMillis;
+            // If we need to give a response during this measurement,
+            // give the value of this measurement.
+            var thisResponseStartMillis =
+                Math.max( measurementStartMillis + pmdm,
+                    rtg.responseStartMillis );
+            var thisResponseEndMillis =
+                Math.min( measurementEndMillis + pmdm,
+                    rtg.responseEndMillis );
+            if ( thisResponseStartMillis < thisResponseEndMillis )
+                forRightNow.push( {
+                    startMillis: thisResponseStartMillis,
+                    go: function () {
+                        pairHalf.membrane.setOutResponse(
+                            rtg.delayMillis,
+                            rtg.demandData,
+                            mousePosition,
+                            thisResponseStartMillis,
+                            thisResponseEndMillis );
+                    }
+                } );
+            
+            // If we need to give a response after this measurement,
+            // put that off until later.
+            if ( measurementEndMillis + pmdm < rtg.responseEndMillis )
+                forLater.push( {
+                    delayMillis: rtg.delayMillis,
+                    demandData: rtg.demandData,
+                    postMeasurementDelayMillis:
+                        rtg.postMeasurementDelayMillis,
+                    responseStartMillis:
+                        Math.max( measurementEndMillis + pmdm,
+                            rtg.responseStartMillis ),
+                    responseEndMillis: rtg.responseEndMillis
+                } );
         } );
+        _.arrEach( forRightNow.sort( function ( a, b ) {
+            return a.startMillis - b.startMillis;
+        } ), function ( frn ) {
+            frn.go();
+        } );
+        responsesToGive = forLater;
+        
         pairHalf.membrane.raiseOtherOutPermanentUntilMillis(
-            nowMillis );
+            measurementStartMillis );
     }, intervalMillis );
 }
 
@@ -1373,7 +1551,7 @@ function makeTestForDemandOverLinkedPair() {
     } );
     var aDemander = pair.a.membrane.getNewOutDemander(
         now, pairDelayMillis,
-        function () { // syncOnResponseAvailable
+        function () {  // syncOnResponseAvailable
             // Do nothing with the responses except forget them.
             getAndForgetDemanderResponse( aDemander );
         } );
@@ -1437,7 +1615,7 @@ function makeTestForResponseOverLinkedPair() {
     } );
     var aDemander = pair.a.membrane.getNewOutDemander(
         now, pairDelayMillis,
-        function () { // syncOnResponseAvailable
+        function () {  // syncOnResponseAvailable
             var nowMillis = new Date().getTime();
             _.arrEach( getAndForgetDemanderResponse( aDemander ),
                 function ( entry ) {
@@ -1523,16 +1701,18 @@ UselessResource.prototype.init = function (
                         // support garbage collection and graceful
                         // shutdown.
                         
-                        // We don't recognize this demand. Respond
-                        // with explicit inactivity.
-                        self.clientMembrane_.suspendOutResponse(
+                        // We don't recognize this message. Respond
+                        // with a dummy value.
+                        self.clientMembrane_.setOutResponse(
                             delayMillis,
                             data,
+                            [],
                             entry.startMillis + delayMillis,
                             entry.maybeEndMillis.val + delayMillis );
                     }
                 } );
             } );
+            explicitlyIgnoreMembraneDemand( self.clientMembrane_ );
         } );
     return self;
 };
@@ -1570,6 +1750,8 @@ DispatcherResource.prototype.init = function ( makeResource,
                     
                     // Send the resource's demand to the client.
                     
+                    var permanentUntilMillis =
+                        resourceMembrane.getInPermanentUntilMillis();
                     _.arrEach(
                         resourceMembrane.getInDemandHistoryEntries(),
                         function ( demand ) {
@@ -1609,6 +1791,8 @@ DispatcherResource.prototype.init = function ( makeResource,
                         } );
                         demander.finishDemand( startMillis );
                     } );
+                    resourceMembrane.forgetInDemandBeforeDemandMillis(
+                        permanentUntilMillis );
                 } );
             var resource = makeResource.call( {},
                 discriminator,
@@ -1625,6 +1809,8 @@ DispatcherResource.prototype.init = function ( makeResource,
         outPermanentUntilMillis, deferForBatching, sendMessage,
         function () {  // syncOnInDemandAvailable
             
+            var permanentUntilMillis =
+                self.clientMembrane_.getInPermanentUntilMillis();
             _.arrEach(
                 self.clientMembrane_.getInDemandHistoryEntries(),
                 function ( demand ) {
@@ -1692,11 +1878,12 @@ DispatcherResource.prototype.init = function ( makeResource,
                         // support garbage collection and graceful
                         // shutdown.
                         
-                        // We don't recognize this demand. Respond
-                        // with explicit inactivity.
-                        self.clientMembrane_.suspendOutResponse(
+                        // We don't recognize this message. Respond
+                        // with a dummy value.
+                        self.clientMembrane_.setOutResponse(
                             delayMillis,
                             data,
+                            [],
                             entry.startMillis + delayMillis,
                             entry.maybeEndMillis.val + delayMillis );
                     }
@@ -1708,6 +1895,8 @@ DispatcherResource.prototype.init = function ( makeResource,
                         demander.endMillis );
                 } );
             } );
+            self.clientMembrane_.forgetInDemandBeforeDemandMillis(
+                permanentUntilMillis );
         } );
     return self;
 };

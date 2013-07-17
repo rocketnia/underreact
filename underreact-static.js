@@ -160,7 +160,7 @@ function behId( type ) {
     var result = {};
     result.inType = type;
     result.outType = type;
-    result.install = function ( startMillis, inSigs, outSigs ) {
+    result.install = function ( context, inSigs, outSigs ) {
         eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
             var inSig = get( inSigs ).leafInfo;
             var outSig = get( outSigs ).leafInfo;
@@ -181,10 +181,10 @@ function behSeq( behOne, behTwo ) {
     result.inType = behOne.inType;
     result.outType =
         typePlusOffsetMillis( behTwo.outType, how.offsetMillis );
-    result.install = function ( startMillis, inSigs, outSigs ) {
+    result.install = function ( context, inSigs, outSigs ) {
         var pairs =
             mapTypeLeafInfo( behOne.outType, function ( ignored ) {
-                return makeLinkedSigPair( startMillis );
+                return makeLinkedSigPair( context.startMillis );
             } );
         var writables = mapTypeLeafInfo( pairs, function ( pair ) {
             return pair.writable;
@@ -193,8 +193,8 @@ function behSeq( behOne, behTwo ) {
             return pair.readable;
         } );
         
-        behOne.install( startMillis, inSigs, writables );
-        behTwo.install( startMillis, readables, outSigs );
+        behOne.install( context, inSigs, writables );
+        behTwo.install( context, readables, outSigs );
     };
     return result;
 }
@@ -213,8 +213,8 @@ function behFstElim( type ) {
     var result = {};
     result.inType = typeTimes( type, typeOne() );
     result.outType = type;
-    result.install = function ( startMillis, inSigs, outSigs ) {
-        behId( type ).install( startMillis, inSigs.first, outSigs );
+    result.install = function ( context, inSigs, outSigs ) {
+        behId( type ).install( context, inSigs.first, outSigs );
     };
     return result;
 }
@@ -223,8 +223,8 @@ function behFstIntro( type ) {
     var result = {};
     result.inType = type;
     result.outType = typeTimes( type, typeOne() );
-    result.install = function ( startMillis, inSigs, outSigs ) {
-        behId( type ).install( startMillis, inSigs, outSigs.first );
+    result.install = function ( context, inSigs, outSigs ) {
+        behId( type ).install( context, inSigs, outSigs.first );
     };
     return result;
 }
@@ -232,9 +232,9 @@ function behFirst( beh, otherType ) {
     var result = {};
     result.inType = typeTimes( beh.inType, otherType );
     result.outType = typeTimes( beh.outType, otherType );
-    result.install = function ( startMillis, inSigs, outSigs ) {
-        beh.install( startMillis, inSigs.first, outSigs.first );
-        behId( otherType ).install( startMillis,
+    result.install = function ( context, inSigs, outSigs ) {
+        beh.install( context, inSigs.first, outSigs.first );
+        behId( otherType ).install( context,
             inSigs.second, outSigs.second );
     };
     return result;
@@ -243,10 +243,10 @@ function behSwap( origFirstType, origSecondType ) {
     var result = {};
     result.inType = typeTimes( origFirstType, origSecondType );
     result.outType = typeTimes( origSecondType, origFirstType );
-    result.install = function ( startMillis, inSigs, outSigs ) {
-        behId( origFirstType ).install( startMillis,
+    result.install = function ( context, inSigs, outSigs ) {
+        behId( origFirstType ).install( context,
             inSigs.first, outSigs.second );
-        behId( origSecondType ).install( startMillis,
+        behId( origSecondType ).install( context,
             inSigs.second, outSigs.first );
     };
     return result;
@@ -257,12 +257,12 @@ function behAssoclp( catcherType, ballType, pitcherType ) {
         typeTimes( catcherType, typeTimes( ballType, pitcherType ) );
     result.outType =
         typeTimes( typeTimes( catcherType, ballType ), pitcherType );
-    result.install = function ( startMillis, inSigs, outSigs ) {
-        behId( catcherType ).install( startMillis,
+    result.install = function ( context, inSigs, outSigs ) {
+        behId( catcherType ).install( context,
             inSigs.first, outSigs.first.first );
-        behId( ballType ).install( startMillis,
+        behId( ballType ).install( context,
             inSigs.second.first, outSigs.first.second );
-        behId( pitcherType ).install( startMillis,
+        behId( pitcherType ).install( context,
             inSigs.second.second, outSigs.second );
     };
     return result;
@@ -271,7 +271,7 @@ function behDup( type ) {
     var result = {};
     result.inType = type;
     result.outType = typeTimes( type, type );
-    result.install = function ( startMillis, inSigs, outSigs ) {
+    result.install = function ( context, inSigs, outSigs ) {
         eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
             var inSig = get( inSigs ).leafInfo;
             var outSigFirst = get( outSigs.first ).leafInfo;
@@ -288,7 +288,7 @@ function behDrop( type ) {
     var result = {};
     result.inType = type;
     result.outType = typeOne();
-    result.install = function ( startMillis, inSigs, outSigs ) {
+    result.install = function ( context, inSigs, outSigs ) {
         eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
             var inSig = get( inSigs ).leafInfo;
             inSig.readEachEntry( function ( entry ) {
@@ -413,8 +413,8 @@ function behLeftIntro( type ) {
     var result = {};
     result.inType = type;
     result.outType = typePlus( type, typeZero() );
-    result.install = function ( startMillis, inSigs, outSigs ) {
-        behId( type ).install( startMillis, inSigs, outSigs.left );
+    result.install = function ( context, inSigs, outSigs ) {
+        behId( type ).install( context, inSigs, outSigs.left );
     };
     return result;
 }
@@ -423,8 +423,8 @@ function behLeftElim( type ) {
     var result = {};
     result.inType = typePlus( type, typeZero() );
     result.outType = type;
-    result.install = function ( startMillis, inSigs, outSigs ) {
-        behId( type ).install( startMillis, inSigs.left, outSigs );
+    result.install = function ( context, inSigs, outSigs ) {
+        behId( type ).install( context, inSigs.left, outSigs );
     };
     return result;
 }
@@ -432,9 +432,9 @@ function behLeft( beh, otherType ) {
     var result = {};
     result.inType = typePlus( beh.inType, otherType );
     result.outType = typePlus( beh.outType, otherType );
-    result.install = function ( startMillis, inSigs, outSigs ) {
-        beh.install( startMillis, inSigs.left, outSigs.left );
-        behId( otherType ).install( startMillis,
+    result.install = function ( context, inSigs, outSigs ) {
+        beh.install( context, inSigs.left, outSigs.left );
+        behId( otherType ).install( context,
             inSigs.right, outSigs.right );
     };
     return result;
@@ -443,10 +443,10 @@ function behMirror( origLeftType, origRightType ) {
     var result = {};
     result.inType = typeTimes( origLeftType, origRightType );
     result.outType = typeTimes( origRightType, origLeftType );
-    result.install = function ( startMillis, inSigs, outSigs ) {
-        behId( origLeftType ).install( startMillis,
+    result.install = function ( context, inSigs, outSigs ) {
+        behId( origLeftType ).install( context,
             inSigs.left, outSigs.right );
-        behId( origRightType ).install( startMillis,
+        behId( origRightType ).install( context,
             inSigs.right, outSigs.left );
     };
     return result;
@@ -457,12 +457,12 @@ function behAssocrs( pitcherType, ballType, catcherType ) {
         typePlus( typePlus( pitcherType, ballType ), catcherType );
     result.outType =
         typePlus( pitcherType, typePlus( ballType, catcherType ) );
-    result.install = function ( startMillis, inSigs, outSigs ) {
-        behId( pitcherType ).install( startMillis,
+    result.install = function ( context, inSigs, outSigs ) {
+        behId( pitcherType ).install( context,
             inSigs.left.left, outSigs.left );
-        behId( ballType ).install( startMillis,
+        behId( ballType ).install( context,
             inSigs.left.right, outSigs.right.left );
-        behId( catcherType ).install( startMillis,
+        behId( catcherType ).install( context,
             inSigs.right, outSigs.right.right );
     };
     return result;
@@ -471,7 +471,7 @@ function behMerge( type ) {
     var result = {};
     result.inType = typePlus( type, type );
     result.outType = type;
-    result.install = function ( startMillis, inSigs, outSigs ) {
+    result.install = function ( context, inSigs, outSigs ) {
         eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
             var inSigLeft = get( inSigs.left ).leafInfo;
             var inSigRight = get( inSigs.right ).leafInfo;
@@ -519,10 +519,10 @@ function behVacuous( type ) {
     var result = {};
     result.inType = typeZero();
     result.outType = type;
-    result.install = function ( startMillis, inSigs, outSigs ) {
+    result.install = function ( context, inSigs, outSigs ) {
         eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
             var outSig = get( inSigs ).leafInfo;
-            outSig.history.finishData( startMillis );
+            outSig.history.finishData( context.startMillis );
         } );
     };
     return result;
@@ -635,7 +635,7 @@ function behDisjoin( branchType, leftType, rightType ) {
     result.outType = typePlus(
         typeTimes( branchType, leftType ),
         typeTimes( branchType, rightType ) );
-    result.install = function ( startMillis, inSigs, outSigs ) {
+    result.install = function ( context, inSigs, outSigs ) {
         var bins = [];
         function getBin( offsetMillis ) {
             return _.arrAny( bins, function ( bin ) {
@@ -806,7 +806,7 @@ function behDelay( delayMillis, type ) {
     var result = {};
     result.inType = type;
     result.outType = typePlusOffsetMillis( type, delayMillis );
-    result.install = function ( startMillis, inSigs, outSigs ) {
+    result.install = function ( context, inSigs, outSigs ) {
         eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
             var inSig = get( inSigs ).leafInfo;
             var outSig = get( outSigs ).leafInfo;
@@ -829,7 +829,7 @@ function behFmap( func ) {
     var result = {};
     result.inType = typeAtom( 0, null );
     result.outType = typeAtom( 0, null );
-    result.install = function ( startMillis, inSigs, outSigs ) {
+    result.install = function ( context, inSigs, outSigs ) {
         var inSig = inSigs.leafInfo;
         var outSig = outSigs.leafInfo;
         inSig.readEachEntry( function ( entry ) {
@@ -851,7 +851,7 @@ function behSplit() {
     result.inType = typeAtom( 0, null );
     result.outType =
         typePlus( typeAtom( 0, null ), typeAtom( 0, null ) );
-    result.install = function ( startMillis, inSigs, outSigs ) {
+    result.install = function ( context, inSigs, outSigs ) {
         var inSig = inSigs.leafInfo;
         var outSigLeft = outSigs.left.leafInfo;
         var outSigRight = outSigs.right.leafInfo;
@@ -885,7 +885,7 @@ function behZip() {
     result.inType =
         typeTimes( typeAtom( 0, null ), typeAtom( 0, null ) );
     result.outType = typeAtom( 0, null );
-    result.install = function ( startMillis, inSigs, outSigs ) {
+    result.install = function ( context, inSigs, outSigs ) {
         var inSigFirst = inSigs.first.leafInfo;
         var inSigSecond = inSigs.second.leafInfo;
         var outSig = outSigs.leafInfo;
@@ -947,6 +947,54 @@ function behZip() {
     return result;
 }
 
+// TODO: See what this would be called in Sirea, if anything.
+//
+// NOTE: This behavior waits as long as the membrane does to receive
+// its response. If the membrane needs to access some unreliable
+// external system, it should hide that unreliability. If the membrane
+// doesn't preserve duration coupling, this will pretend it responded
+// with a dummy value.
+//
+function behRpc( delayMillis ) {
+    if ( !isValidDuration( delayMillis ) )
+        throw new Error();
+    var result = {};
+    result.inType = typeAtom( 0, null );
+    result.outType = typeAtom( delayMillis, null );
+    result.install = function ( context, inSigs, outSigs ) {
+        var inSig = inSigs.leafInfo;
+        var outSig = outSigs.leafInfo;
+        
+        var demander = context.membrane.getNewOutDemander(
+            context.startMillis, delayMillis,
+            function () {  // syncOnResponseAvailable
+                _.arrEach( getAndForgetDemanderResponse( demander ),
+                    function ( entry ) {
+                    
+                    outSig.history.addEntry( {
+                        maybeData: entry.maybeData === null ? null :
+                            { val: entry.maybeData.val.length === 1 ?
+                                [] : entry.maybeData.val[ 1 ] },
+                        startMillis: entry.startMillis,
+                        maybeEndMillis: entry.maybeEndMillis
+                    } );
+                } );
+            } );
+        
+        inSig.readEachEntry( function ( entry ) {
+            if ( entry.maybeEndMillis === null )
+                demander.finishDemand( entry.startMillis );
+            else if ( entry.maybeData === null )
+                demander.suspendDemand(
+                    entry.startMillis, entry.maybeEndMillis.val );
+            else
+                demander.setDemand( entry.maybeData.val,
+                    entry.startMillis, entry.maybeEndMillis.val );
+        } );
+    };
+    return result;
+}
+
 // TODO: Implement some additional axiomatic operations like these
 // featured in Sirea's readme:
 //
@@ -966,7 +1014,7 @@ function behMouseQuery() {
     var result = {};
     result.inType = typeAtom( 0, null );
     result.outType = typeAtom( 0, null );
-    result.install = function ( startMillis, inSigs, outSigs ) {
+    result.install = function ( context, inSigs, outSigs ) {
         var inSig = inSigs.leafInfo;
         var outSig = outSigs.leafInfo;
         linkMouseQuery( inSig, outSig );
@@ -978,7 +1026,7 @@ function behDomDiagnostic( syncOnLinkMetadata ) {
     var result = {};
     result.inType = typeAtom( 0, null );
     result.outType = typeAtom( 0, null );
-    result.install = function ( startMillis, inSigs, outSigs ) {
+    result.install = function ( context, inSigs, outSigs ) {
         var inSig = inSigs.leafInfo;
         var outSig = outSigs.leafInfo;
         syncOnLinkMetadata( linkDomDiagnostic( inSig, outSig ) );
@@ -1000,6 +1048,19 @@ function makeTestForBehaviors() {
     var dom = null;
     
     var nowMillis = new Date().getTime();
+    function deferForBatching( func ) {
+        setTimeout( function () {
+            func();
+        }, 0 );
+    }
+    var membranePair =
+        makeLinkedMembranePair( nowMillis, deferForBatching );
+    membranePair.a.syncOnInDemandAvailable( function () {
+        explicitlyIgnoreMembraneDemand( membranePair.a.membrane );
+    } );
+    membranePair.b.syncOnInDemandAvailable( function () {
+        explicitlyIgnoreMembraneDemand( membranePair.b.membrane );
+    } );
     var step1 = makeLinkedSigPair( nowMillis );
     var step2 = makeLinkedSigPair( nowMillis );
     behSeqs(
@@ -1010,7 +1071,8 @@ function makeTestForBehaviors() {
         behDomDiagnostic( function ( linkMetadata ) {
             dom = linkMetadata.dom;
         } )
-    ).install( nowMillis,
+    ).install(
+        { startMillis: nowMillis, membrane: membranePair.b.membrane },
         typeAtom( 0, step1.readable ),
         typeAtom( mouseDelayMillis, step2.writable ) );
     step2.readable.readEachEntry( function ( entry ) {
@@ -1022,11 +1084,16 @@ function makeTestForBehaviors() {
     // for.
     var intervalMillis = 10;
     var stabilityMillis = 500;  // 20;
+    var otherOutStabilityMillis = 1000000;
     setInterval( function () {
         var nowMillis = new Date().getTime();
         step1.writable.history.setData(
             JSON.stringify( measurementDelayMillis ),
             nowMillis, nowMillis + stabilityMillis );
+        membranePair.a.membrane.raiseOtherOutPermanentUntilMillis(
+            nowMillis + otherOutStabilityMillis );
+        membranePair.b.membrane.raiseOtherOutPermanentUntilMillis(
+            nowMillis + otherOutStabilityMillis );
     }, intervalMillis );
     
     return { dom: dom };
