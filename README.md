@@ -1,42 +1,58 @@
 Underreact
 ==========
 
-I'm building a framework for continuous reactive programming,
-particularly David Barbour's model "RDP" (Reactive Demand
-Programming), using JavaScript as a platform. This repository
-represents a few attempts at that goal.
+Underreact is a framework for continuous reactive programming, using
+JavaScript as a runtime platform. David Barbour has been creating a
+programming model called RDP (Reactive Demand Programming), and
+Underreact is primarily my attempt to implement that vision--not just
+to prove it can be done, but to use it in my own projects. I may make
+some different choices that stray from what David would like to call
+RDP, partly because I still don't completely understand the reasons
+for the RDP design.
 
-### The latest and greatest attempt
+I've implemented a system for specifying and using a certain subset of
+RDP behaviors. This subset is an elegant system in itself, but it has
+no dynamic behavior support, and its behaviors are limited to a single
+partition.
 
-* underreact-dynamic.js
-* underreact-static.js
-* underreact-dynamic-test.html
+For the time being, I've been doing tests using two ad hoc I/O
+behaviors dedicated to very specific tasks:
 
-I've implemented a full system for specifying and using RDP behaviors.
-For now, it has no support for dynamic behaviors or multi-partition
-programs, and it has no ambient resource space. It has a couple of ad
-hoc I/O behaviors just to make a demo work.
+* Watch the mouse input.
+* Dump a signal to a DOM element for visualization as text.
 
-I have some code for conveying continuous demands and responses across
-a message-passing protocol, for the purposes of implementing
-multi-partition support and resource spaces, but it isn't yet
-integrated with the behavior model.
+Now that your expectations are low enough, feel free to take a look at
+[some Underreact test code in action](http://rocketnia.github.io/underreact/underreact-dynamic-test.html).
 
-I expect the design of this system to converge toward David Barbour's
-ideals for RDP, but I'm allowing myself to take different paths and do
-a bit of experimentation along the way. For instance, Underreact lacks
-type inference, but it can model more expressive behavior types than
-Sirea, since it can use JavaScript values at the type level.
+### `behRpc()`
 
-### Old attempts
+As an experimental way to communicate with outside systems, I model
+ambient access to a "membrane" that sends out demands to another
+system. This access is in the form of `behRpc`, a kind of yield
+operator which can pass a signal of serializable data to the
+environment and get another signal of serializable data in response,
+very much like a coroutine `yield`.
 
-The files "underreact-rdpio.js" and "underreact-test.html" are an old
-attempt to port David Barbour's Haskell code directly. I abandoned
-this before completing it, mostly because it was too hard to keep up
-with the upstream changes.
+This direction would be expressive, but RDP is meant to be securable
+using object-capability model techniques, and I suspect this mechanism
+would encourage developers to lump all their privileges on the ambient
+environment rather than using fine-grained control.
 
-The file "graphlang.js" is a JavaScript EDSL for constructing
-data-control flow graphs, so that the code to build the data-control
-flow graph looks vaguely similar to how the same data-control flow
-appears in JavaScript itself. This may come in handy for writing RDP
-behavior graphs.
+### Possible future directions (in no particular order)
+
+* Provide demand monitors.
+* Provide resource spaces.
+* Provide persistent memory resources.
+* Support dynamic evaluation of serialized behaviors.
+* Support remote partitions.
+* Design a type inference layer, for convenient programming.
+* Design a textual syntax, for convenient programming.
+
+I intend for [Era](https://github.com/rocketnia/era), my
+meaning-preserving module system, to coexist well with RDP, so Era and
+Underreact have some future directions in common:
+
+* Let Era modules describe RDP programs which can be compiled to use
+  Underreact.
+* Provide an Underreact state resource that represents a set of
+  installed [Era](https://github.com/rocketnia/era) modules.
