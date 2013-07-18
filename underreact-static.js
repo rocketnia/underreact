@@ -651,10 +651,8 @@ function behDisjoin( branchType, leftType, rightType ) {
             var bin = getBin( offsetMillis );
             if ( !bin ) {
                 bin = {
-                    hasInformant: {},
                     offsetMillis: offsetMillis,
-                    branchesPending: [],
-                    informantsPending: []
+                    branchesPending: []
                 };
                 bins.push( bin );
             }
@@ -662,7 +660,15 @@ function behDisjoin( branchType, leftType, rightType ) {
             bin.branchesPending.push( {
                 outSigLeft: outSigLeft,
                 outSigRight: outSigRight,
-                conditionPending: [],
+                conditionPending: new ActivityHistory().init( {
+                    startMillis: context.startMillis,
+                    syncOnAdd: function () {
+                        // Do nothing.
+                    },
+                    syncOnForget: function () {
+                        // Do nothing.
+                    }
+                } ),
                 dataPending: pending
             } );
             inSig.readEachEntry( function ( entry ) {
@@ -671,91 +677,63 @@ function behDisjoin( branchType, leftType, rightType ) {
             } );
         } );
         
-        function eachOnOneSide( condition, type, inSigs, outSigs ) {
+        function eachOnOneSide(
+            condition, oppositeCondition, type, inSigs, outSigs ) {
+            
             eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
                 var inSig = get( inSigs ).leafInfo;
                 var outSig = get( outSigs ).leafInfo;
                 var offsetMillis = get( branchType ).offsetMillis;
                 
                 var bin = getBin( offsetMillis );
-                bin.hasInormant[ condition ] = true;
                 
-                var pending = [];
-                if ( bin )
-                    bin.informantsPending.push( pending );
                 inSig.readEachEntry( function ( entry ) {
                     outSig.history.addEntry( entry );
-                    // Store this activity profile for use in the
-                    // branch, but don't bother keeping all this
-                    // signal's data.
                     if ( bin ) {
-                        pending.push( {
-                            maybeData: entry.maybeData === null ?
-                                null : { val: condition },
+                        // NOTE: Inactivity on one side essentially
+                        // counts as activity on the other side, so we
+                        // track the branched activity profile in a
+                        // single always-active history. It'll be
+                        // maksed by the branching signal's activity
+                        // profile later on.
+                        var conditionEntry = {
+                            maybeData: { val:
+                                entry.maybeData === null ?
+                                    oppositeCondition : condition },
                             startMillis: entry.startMillis,
                             maybeEndMillis: entry.maybeEndMillis
+                        };
+                        _.arrEach( bin.branchesPending,
+                            function ( branch ) {
+                            
+                            branch.conditionPending.addEntry(
+                                conditionEntry );
                         } );
                         processPending();
                     }
                 } );
             } );
         }
-        eachOnOneSide( "left", leftType,
+        eachOnOneSide( "left", "right", leftType,
             inSigs.second.left, outSigs.left.second );
-        eachOnOneSide( "right", rightType,
+        eachOnOneSide( "right", "left", rightType,
             inSigs.second.right, outSigs.right.second );
         
         function processPending() {
             _.arrEach( bins, function ( bin ) {
-                
-                // TODO: Whoops, this waits until every single
-                // informant has information about the branch. We
-                // should really know what the branch will be as soon
-                // as at least one informant tells us.
-                consumeEarliestEntries( bin.informantsPending,
-                    function ( earliestEntries ) {
-                    
-                    var maybeCondition = null;
-                    _.arrEach( earliestEntries, function ( entry ) {
-                        if ( entry.maybeData === null )
-                            return;
-                        if ( maybeCondition === null )
-                            maybeCondition = entry.maybeData;
-                        // NOTE: This is a sanity check to make sure
-                        // the inputs are as disjoint as the type
-                        // system indicates they are.
-                        if ( maybeCondition.val !==
-                            entry.maybeData.val )
-                            throw new Error();
-                    } );
-                    var conditionEntry = {
-                        maybeData: maybeCondition,
-                        startMillis: earliestEntries[ 0 ].startMillis,
-                        maybeEndMillis:
-                            earliestEntries[ 0 ].maybeEndMillis
-                    };
-                    _.arrEach( bin.branchesPending,
-                        function ( branch ) {
-                        
-                        branch.conditionPending.push(
-                            conditionEntry );
-                    } );
-                } );
-                
                 _.arrEach( bin.branchesPending, function ( branch ) {
+                    
+                    // TODO: See if we should really copy the Array
+                    // here, since getAllEntries() already does it.
+                    var conditionPending = branch.conditionPending.
+                        getAllEntries().slice();
+                    
                     consumeEarliestEntries( [
-                        branch.conditionPending,
+                        conditionPending,
                         branch.dataPending
                     ], function ( earliestEntries ) {
                         var conditionEntry = earliestEntries[ 0 ];
                         var dataEntry = earliestEntries[ 1 ];
-                        
-                        // NOTE: This is a sanity check to make sure
-                        // the inputs are as synchronized as the type
-                        // system indicates they are.
-                        if ( conditionEntry.maybeData !== null &&
-                            dataEntry.maybeData === null )
-                            throw new Error();
                         
                         var nullEntry = {
                             maybeData: null,
@@ -769,18 +747,16 @@ function behDisjoin( branchType, leftType, rightType ) {
                             branch.outSigRight.history.addEntry(
                                 nullEntry );
                             
-                        } else if (
-                            conditionEntry.maybeData.val === "left"
-                            || !bin.hasInformant[ "left" ] ) {
+                        } else if ( conditionEntry.maybeData.val ===
+                            "left" ) {
                             
                             branch.outSigLeft.history.addEntry(
                                 dataEntry );
                             branch.outSigRight.history.addEntry(
                                 nullEntry );
                             
-                        } else if (
-                            conditionEntry.maybeData.val === "right"
-                            || !bin.hasInformant[ "right" ] ) {
+                        } else if ( conditionEntry.maybeData.val ===
+                            "right" ) {
                             
                             branch.outSigLeft.history.addEntry(
                                 nullEntry );
@@ -790,6 +766,8 @@ function behDisjoin( branchType, leftType, rightType ) {
                             throw new Error();
                         }
                     } );
+                    branch.conditionPending.forgetBeforeMillis(
+                        entsEnd( conditionPending ) );
                 } );
             } );
         }
