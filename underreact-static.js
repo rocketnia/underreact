@@ -19,6 +19,10 @@ function typePlus( left, right ) {
 function typeZero() {
     return { op: "zero" };
 }
+function typeAnytimeFn( demand, response, leafInfo ) {
+    return { op: "anytimeFn",
+        demand: demand, response: response, leafInfo: leafInfo };
+}
 
 function typesAreEqual( offsetMillis, a, b ) {
     if ( !isValidDuration( offsetMillis ) )
@@ -47,6 +51,9 @@ function typesAreEqual( offsetMillis, a, b ) {
                 { a: types.a.right, b: types.b.right } );
         } else if ( op === "zero" ) {
             // Do nothing.
+        } else if ( op === "anytimeFn" ) {
+            return typesUnify( types.a.demand, types.b.demand ) !==
+                null;
         } else {
             throw new Error();
         }
@@ -83,6 +90,19 @@ function typesUnify( a, b ) {
                 { a: types.a.right, b: types.b.right } );
         } else if ( op === "zero" ) {
             // Do nothing.
+        } else if ( op === "anytimeFn" ) {
+            // TODO: Do this without recursion.
+            var unifiedDemand =
+                typesUnify( types.a.demand, types.b.demand );
+            if ( unifiedDemand === null )
+                return null;
+            var unifiedResponse =
+                typesUnify( types.a.response, types.b.response );
+            if ( unifiedResponse === null )
+                return null;
+            if ( unifiedDemand.offsetMillis !==
+                unifiedResponse.offsetMillis )
+                return null;
         } else {
             throw new Error();
         }
@@ -90,70 +110,181 @@ function typesUnify( a, b ) {
     return { offsetMillis: offsetMillis };
 }
 
-function mapTypeAtomNodes( type, func ) {
+function mapTypeLeafNodes( type, func ) {
     var op = type.op;
     if ( op === "atom" ) {
         return func( type );
     } else if ( op === "times" ) {
         return typeTimes(
-            mapTypeAtomNodes( type.first, func ),
-            mapTypeAtomNodes( type.second, func ) );
+            mapTypeLeafNodes( type.first, func ),
+            mapTypeLeafNodes( type.second, func ) );
     } else if ( op === "one" ) {
         return type;
     } else if ( op === "plus" ) {
         return typePlus(
-            mapTypeAtomNodes( type.left, func ),
-            mapTypeAtomNodes( type.right, func ) );
+            mapTypeLeafNodes( type.left, func ),
+            mapTypeLeafNodes( type.right, func ) );
     } else if ( op === "zero" ) {
         return type;
+    } else if ( op === "anytimeFn" ) {
+        return func( type );
     } else {
         throw new Error();
     }
 }
 
-function eachTypeAtomNodeZipper( type, zipContinuation, body ) {
+function eachTypeLeafNodeZipper( type, zipContinuation, body ) {
     var op = type.op;
     if ( op === "atom" ) {
         body( zipContinuation );
     } else if ( op === "times" ) {
-        eachTypeAtomNodeZipper( type.first, function ( x ) {
+        eachTypeLeafNodeZipper( type.first, function ( x ) {
             return zipContinuation( x ).first;
         }, body );
-        eachTypeAtomNodeZipper( type.second, function ( x ) {
+        eachTypeLeafNodeZipper( type.second, function ( x ) {
             return zipContinuation( x ).second;
         }, body );
     } else if ( op === "one" ) {
         // Do nothing.
     } else if ( op === "plus" ) {
-        eachTypeAtomNodeZipper( type.left, function ( x ) {
+        eachTypeLeafNodeZipper( type.left, function ( x ) {
             return zipContinuation( x ).left;
         }, body );
-        eachTypeAtomNodeZipper( type.right, function ( x ) {
+        eachTypeLeafNodeZipper( type.right, function ( x ) {
             return zipContinuation( x ).right;
         }, body );
     } else if ( op === "zero" ) {
         // Do nothing.
+    } else if ( op === "anytimeFn" ) {
+        body( zipContinuation );
     } else {
         throw new Error();
     }
 }
 
+function eachTypeLeafNodeOver( var_args, body ) {
+    if ( arguments.length < 2 )
+        throw new Error();
+    var args = _.arrCut( arguments );
+    body = args.pop();
+    eachTypeLeafNodeZipper( args[ 0 ], _.idfn, function ( get ) {
+        body.apply( {}, [ get( args[ 0 ] ) ].concat(
+            _.arrMap( args, function ( type ) {
+                return get( type ).leafInfo;
+            } ) ) );
+    } );
+}
+
 function typePlusOffsetMillis( type, offsetMillis ) {
     if ( !isValidDuration( offsetMillis ) )
         throw new Error();
-    return mapTypeAtomNodes( type, function ( type ) {
-        return typeAtom(
-            type.offsetMillis + offsetMillis, type.leafInfo );
+    return mapTypeLeafNodes( type, function ( type ) {
+        if ( type.op === "atom" ) {
+            return typeAtom(
+                type.offsetMillis + offsetMillis, type.leafInfo );
+        } else if ( type.op === "anytimeFn" ) {
+            return type;
+        } else {
+            throw new Error();
+        }
     } );
 }
 
 function mapTypeLeafInfo( type, func ) {
-    return mapTypeAtomNodes( type, function ( type ) {
-        return typeAtom( type.offsetMillis, func( type.leafInfo ) );
+    return mapTypeLeafNodes( type, function ( type ) {
+        if ( type.op === "atom" ) {
+            return typeAtom( type.offsetMillis, func( type ) );
+        } else if ( type.op === "anytimeFn" ) {
+            return typeAnytimeFn(
+                type.demand, type.response, func( type ) );
+        } else {
+            throw new Error();
+        }
     } );
 }
 
+function makePairsForType( startMillis, type ) {
+    var pairs = mapTypeLeafInfo( type, function ( type ) {
+        if ( type.op === "atom" ) {
+            return makeLinkedSigPair( startMillis );
+        } else if ( type.op === "anytimeFn" ) {
+            return makeAnytimeFnInstallationPair();
+        } else {
+            throw new Error();
+        }
+    } );
+    var result = {};
+    result.writables = mapTypeLeafInfo( pairs, function ( pair ) {
+        return pair.leafInfo.writable;
+    } );
+    result.readables = mapTypeLeafInfo( pairs, function ( pair ) {
+        return pair.leafInfo.readable;
+    } );
+    return result;
+}
+
+function makeOnBegin() {
+    var begun = false;
+    var funcs = [];
+    
+    var result = {};
+    result.onBegin = function ( func ) {
+        
+        // If someone's accidentally using the same behavior
+        // installation context to call onBegin even after the begin()
+        // phase is underway, catch that mistake and throw an error.
+        if ( begun )
+            throw new Error();
+        
+        funcs.push( func );
+    };
+    result.begin = function () {
+        var begun = true;
+        for ( var n = funcs.length; n !== 0; n = funcs.length ) {
+            funcs = _.arrRem( funcs, function ( func ) {
+                return func();
+            } );
+            
+            // If we're probably in an infinite loop, throw an error.
+            if ( funcs.length === n )
+                throw new Error();
+        }
+    };
+    return result;
+}
+
 // ===== Behavior category ===========================================
+
+function makeAnytimeFnInstallationPair() {
+    var doStaticInvoke = null;
+    var writable = {};
+    writable.onStaticInvoke = function ( func ) {
+        if ( doStaticInvoke !== null || func === null )
+            throw new Error();
+        doStaticInvoke = func;
+    };
+    writable.readFrom = function ( readable ) {
+        // NOTE: This is just a convenience method for onStaticInvoke.
+        writable.onStaticInvoke(
+            function ( context, delayMillis, inSigs, outSigs ) {
+            
+            readable.doStaticInvoke(
+                context, delayMillis, inSigs, outSigs );
+        } );
+    };
+    var readable = {};
+    readable.isConnected = function () {
+        return doStaticInvoke !== null;
+    };
+    readable.doStaticInvoke = function (
+        context, delayMillis, inSigs, outSigs ) {
+        
+        if ( doStaticInvoke === null )
+            throw new Error();
+        doStaticInvoke( context, delayMillis, inSigs, outSigs );
+    };
+    return { writable: writable, readable: readable };
+}
 
 // TODO: See what this would be called in Sirea.
 function behId( type ) {
@@ -161,12 +292,18 @@ function behId( type ) {
     result.inType = type;
     result.outType = type;
     result.install = function ( context, inSigs, outSigs ) {
-        eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
-            var inSig = get( inSigs ).leafInfo;
-            var outSig = get( outSigs ).leafInfo;
-            inSig.readEachEntry( function ( entry ) {
-                outSig.history.addEntry( entry );
-            } );
+        eachTypeLeafNodeOver( inSigs, outSigs,
+            function ( type, inSig, outSig ) {
+            
+            if ( type.op === "atom" ) {
+                inSig.readEachEntry( function ( entry ) {
+                    outSig.history.addEntry( entry );
+                } );
+            } else if ( type.op === "anytimeFn" ) {
+                outSig.readFrom( inSig );
+            } else {
+                throw new Error();
+            }
         } );
     };
     return result;
@@ -183,18 +320,9 @@ function behSeq( behOne, behTwo ) {
         typePlusOffsetMillis( behTwo.outType, how.offsetMillis );
     result.install = function ( context, inSigs, outSigs ) {
         var pairs =
-            mapTypeLeafInfo( behOne.outType, function ( ignored ) {
-                return makeLinkedSigPair( context.startMillis );
-            } );
-        var writables = mapTypeLeafInfo( pairs, function ( pair ) {
-            return pair.writable;
-        } );
-        var readables = mapTypeLeafInfo( pairs, function ( pair ) {
-            return pair.readable;
-        } );
-        
-        behOne.install( context, inSigs, writables );
-        behTwo.install( context, readables, outSigs );
+            makePairsForType( context.startMillis, behOne.outType );
+        behOne.install( context, inSigs, pairs.writables );
+        behTwo.install( context, pairs.readables, outSigs );
     };
     return result;
 }
@@ -272,14 +400,20 @@ function behDup( type ) {
     result.inType = type;
     result.outType = typeTimes( type, type );
     result.install = function ( context, inSigs, outSigs ) {
-        eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
-            var inSig = get( inSigs ).leafInfo;
-            var outSigFirst = get( outSigs.first ).leafInfo;
-            var outSigSecond = get( outSigs.second ).leafInfo;
-            inSig.readEachEntry( function ( entry ) {
-                outSigFirst.history.addEntry( entry );
-                outSigSecond.history.addEntry( entry );
-            } );
+        eachTypeLeafNodeOver( inSigs, outSigs.first, outSigs.second,
+            function ( type, inSig, outSigFirst, outSigSecond ) {
+            
+            if ( type.op === "atom" ) {
+                inSig.readEachEntry( function ( entry ) {
+                    outSigFirst.history.addEntry( entry );
+                    outSigSecond.history.addEntry( entry );
+                } );
+            } else if ( type.op === "anytimeFn" ) {
+                outSigFirst.readFrom( inSig );
+                outSigSecond.readFrom( inSig );
+            } else {
+                throw new Error();
+            }
         } );
     };
     return result;
@@ -289,11 +423,16 @@ function behDrop( type ) {
     result.inType = type;
     result.outType = typeOne();
     result.install = function ( context, inSigs, outSigs ) {
-        eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
-            var inSig = get( inSigs ).leafInfo;
-            inSig.readEachEntry( function ( entry ) {
+        eachTypeLeafNodeOver( inSigs, function ( type, inSig ) {
+            if ( type.op === "atom" ) {
+                inSig.readEachEntry( function ( entry ) {
+                    // Do nothing.
+                } );
+            } else if ( type.op === "anytimeFn" ) {
                 // Do nothing.
-            } );
+            } else {
+                throw new Error();
+            }
         } );
     };
     return result;
@@ -472,20 +611,62 @@ function behMerge( type ) {
     result.inType = typePlus( type, type );
     result.outType = type;
     result.install = function ( context, inSigs, outSigs ) {
-        eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
-            var inSigLeft = get( inSigs.left ).leafInfo;
-            var inSigRight = get( inSigs.right ).leafInfo;
-            var outSig = get( outSigs ).leafInfo;
-            var leftPending = [];
-            var rightPending = [];
-            inSigLeft.readEachEntry( function ( entry ) {
-                leftPending.push( entry );
-                processPending();
-            } );
-            inSigRight.readEachEntry( function ( entry ) {
-                rightPending.push( entry );
-                processPending();
-            } );
+        eachTypeLeafNodeOver( inSigs.left, inSigs.right, outSigs,
+            function ( type, inSigLeft, inSigRight, outSig ) {
+            
+            if ( type.op === "atom" ) {
+                var leftPending = [];
+                var rightPending = [];
+                inSigLeft.readEachEntry( function ( entry ) {
+                    leftPending.push( entry );
+                    processPending();
+                } );
+                inSigRight.readEachEntry( function ( entry ) {
+                    rightPending.push( entry );
+                    processPending();
+                } );
+            } else if ( type.op === "anytimeFn" ) {
+                outSig.onStaticInvoke( function (
+                    context, delayMillis, inSigs, outSigs ) {
+                    
+                    var outSigLeftPairs = makePairsForType(
+                        context.startMillis, type.response );
+                    var outSigRightPairs = makePairsForType(
+                        context.startMillis, type.response );
+                    
+                    // Split the inputs.
+                    //
+                    // NOTE: We send the inputs to both merged
+                    // behaviors. In order to avoid violations of
+                    // duration coupling, every implementation of
+                    // onStaticInvoke/doStaticInvoke must filter its
+                    // input signal according to the true activity
+                    // profile of the behavior-carrying signal.
+                    //
+                    // The typePlus() operator represents a choice the
+                    // downstream code can't control but the upstream
+                    // code can, so we shunt the filtering
+                    // responsibility upstream.
+                    //
+                    inSigLeft.doStaticInvoke( context, delayMillis,
+                        inSigs, outSigLeftPairs.writable );
+                    inSigRight.doStaticInvoke( context, delayMillis,
+                        inSigs, outSigRightPairs.writable );
+                    
+                    // Merge the outputs.
+                    //
+                    // Marvel at this convoluted recurrence.
+                    //
+                    behMerge( type.response ).install( context,
+                        typePlus(
+                            outSigLeftPairs.readable,
+                            outSigRightPairs.readable ),
+                        outSigs );
+                } );
+            } else {
+                throw new Error();
+            }
+            
             function processPending() {
                 consumeEarliestEntries(
                     [ leftPending, rightPending ],
@@ -520,9 +701,57 @@ function behVacuous( type ) {
     result.inType = typeZero();
     result.outType = type;
     result.install = function ( context, inSigs, outSigs ) {
-        eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
-            var outSig = get( inSigs ).leafInfo;
-            outSig.history.finishData( context.startMillis );
+        eachTypeLeafNodeOver( outSigs, function ( type, outSig ) {
+            if ( type.op === "atom" ) {
+                context.onBegin( function () {
+                    outSig.history.finishData( context.startMillis );
+                    return !!"wasAbleToFinish";
+                } );
+            } else if ( type.op === "anytimeFn" ) {
+                ignoreAnytimeFn( outSig );
+            } else {
+                throw new Error();
+            }
+            
+            function ignoreAnytimeFn( outSig ) {
+                outSig.onStaticInvoke( function (
+                    context, delayMillis, inSigs, outSigs ) {
+                    
+                    eachTypeLeafNodeOver( inSigs, outSigs,
+                        function ( type, inSig, outSig ) {
+                        
+                        if ( type.op === "atom" ) {
+                            inSig.readEachEntry( function ( entry ) {
+                                // Do nothing. The implementation of
+                                // behMerge on behavior-carrying
+                                // signals sends the input to both of
+                                // the merged behaviors, expecting
+                                // them to filter based on their
+                                // signal's activity profile. We're
+                                // doing one case of that filtering
+                                // right now, by ignoring all inputs
+                                // since this behavior-carrying signal
+                                // is forever inactive.
+                            } );
+                            context.onBegin( function () {
+                                outSig.history.finishData(
+                                    context.startMillis );
+                                return !!"wasAbleToFinish";
+                            } );
+                        } else if ( type.op === "anytimeFn" ) {
+                            // TODO: Figure out if we should really be
+                            // ignoring recursively here. Will vacuous
+                            // anytimeFns this deep even need to be
+                            // handled in the first place? And if they
+                            // will, would it be better to just let it
+                            // happen using outSig.readFrom( inSig )?
+                            ignoreAnytimeFn( outSig );
+                        } else {
+                            throw new Error();
+                        }
+                    } );
+                } );
+            }
         } );
     };
     return result;
@@ -615,9 +844,22 @@ function behConjoin( branchType, leftType, rightType ) {
 // same for all atomic signals.
 //
 function behDisjoin( branchType, leftType, rightType ) {
-    var branchAtomNodes = mapTypeAtomNodes( branchType, _.idfn );
-    var leftAtomNodes = mapTypeAtomNodes( leftType, _.idfn );
-    var rightAtomNodes = mapTypeAtomNodes( rightType, _.idfn );
+    function getAllAtomNodes( branchType ) {
+        return _.acc( function ( y ) {
+            eachTypeLeafNode( branchType, function ( type ) {
+                if ( type.op === "atom" ) {
+                    y( type );
+                } else if ( type.op === "anytimeFn" ) {
+                    // Do nothing.
+                } else {
+                    throw new Error();
+                }
+            } );
+        } );
+    }
+    var branchAtomNodes = getAllAtomNodes( branchType );
+    var leftAtomNodes = getAllAtomNodes( leftType );
+    var rightAtomNodes = getAllAtomNodes( rightType );
     if ( !_.arrAll( branchAtomNodes, function ( branchAtomNode ) {
         return _.arrAny( _.arrPlus( leftAtomNodes, rightAtomNodes ),
             function ( informantAtomNode ) {
@@ -642,76 +884,86 @@ function behDisjoin( branchType, leftType, rightType ) {
                 return bin.offsetMillis === offsetMillis;
             } );
         }
-        eachTypeAtomNodeZipper( branchType, _.idfn, function ( get ) {
-            var inSig = get( inSigs.first ).leafInfo;
-            var outSigLeft = get( outSigs.left.first ).leafInfo;
-            var outSigRight = get( outSigs.right.first ).leafInfo;
-            var offsetMillis = get( branchType ).offsetMillis;
+        eachTypeLeafNodeOver(
+            inSigs.first, outSigs.left.first, outSigs.right.first,
+            function ( type, inSig, outSigLeft, outSigRight ) {
             
-            var bin = getBin( offsetMillis );
-            if ( !bin ) {
-                bin = {
-                    offsetMillis: offsetMillis,
-                    branchesPending: []
-                };
-                bins.push( bin );
+            if ( type.op === "atom" ) {
+                var bin = getBin( type.offsetMillis );
+                if ( !bin ) {
+                    bin = {
+                        offsetMillis: type.offsetMillis,
+                        branchesPending: []
+                    };
+                    bins.push( bin );
+                }
+                var pending = [];
+                bin.branchesPending.push( {
+                    outSigLeft: outSigLeft,
+                    outSigRight: outSigRight,
+                    conditionPending: new ActivityHistory().init( {
+                        startMillis: context.startMillis,
+                        syncOnAdd: function () {
+                            // Do nothing.
+                        },
+                        syncOnForget: function () {
+                            // Do nothing.
+                        }
+                    } ),
+                    dataPending: pending
+                } );
+                inSig.readEachEntry( function ( entry ) {
+                    pending.push( entry );
+                    processPending();
+                } );
+            } else if ( type.op === "anytimeFn" ) {
+                outSigLeft.readFrom( inSig );
+                outSigRight.readFrom( inSig );
+            } else {
+                throw new Error();
             }
-            var pending = [];
-            bin.branchesPending.push( {
-                outSigLeft: outSigLeft,
-                outSigRight: outSigRight,
-                conditionPending: new ActivityHistory().init( {
-                    startMillis: context.startMillis,
-                    syncOnAdd: function () {
-                        // Do nothing.
-                    },
-                    syncOnForget: function () {
-                        // Do nothing.
-                    }
-                } ),
-                dataPending: pending
-            } );
-            inSig.readEachEntry( function ( entry ) {
-                pending.push( entry );
-                processPending();
-            } );
         } );
         
         function eachOnOneSide(
             condition, oppositeCondition, type, inSigs, outSigs ) {
             
-            eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
-                var inSig = get( inSigs ).leafInfo;
-                var outSig = get( outSigs ).leafInfo;
-                var offsetMillis = get( branchType ).offsetMillis;
+            eachTypeLeafNodeOver( inSigs, outSigs,
+                function ( type, inSig, outSig ) {
                 
-                var bin = getBin( offsetMillis );
-                
-                inSig.readEachEntry( function ( entry ) {
-                    outSig.history.addEntry( entry );
-                    if ( bin ) {
-                        // NOTE: Inactivity on one side essentially
-                        // counts as activity on the other side, so we
-                        // track the branched activity profile in a
-                        // single always-active history. It'll be
-                        // maksed by the branching signal's activity
-                        // profile later on.
-                        var conditionEntry = {
-                            maybeData: { val:
-                                entry.maybeData === null ?
-                                    oppositeCondition : condition },
-                            startMillis: entry.startMillis,
-                            maybeEndMillis: entry.maybeEndMillis
-                        };
-                        _.arrEach( bin.branchesPending,
-                            function ( branch ) {
-                            
-                            branch.conditionPending.addEntry(
-                                conditionEntry );
-                        } );
-                        processPending();
-                    }
-                } );
+                if ( type.op === "atom" ) {
+                    var bin = getBin( type.offsetMillis );
+                    inSig.readEachEntry( function ( entry ) {
+                        outSig.history.addEntry( entry );
+                        if ( bin ) {
+                            // NOTE: Inactivity on one side
+                            // essentially counts as activity on the
+                            // other side, so we track the branched
+                            // activity profile in a single
+                            // always-active history. It'll be masked
+                            // by the branching signal's activity
+                            // profile later on.
+                            var conditionEntry = {
+                                maybeData:
+                                    { val: entry.maybeData === null ?
+                                        oppositeCondition :
+                                        condition },
+                                startMillis: entry.startMillis,
+                                maybeEndMillis: entry.maybeEndMillis
+                            };
+                            _.arrEach( bin.branchesPending,
+                                function ( branch ) {
+                                
+                                branch.conditionPending.addEntry(
+                                    conditionEntry );
+                            } );
+                            processPending();
+                        }
+                    } );
+                } else if ( type.op === "anytimeFn" ) {
+                    outSig.readFrom( inSig );
+                } else {
+                    throw new Error();
+                }
             } );
         }
         eachOnOneSide( "left", "right", leftType,
@@ -778,6 +1030,37 @@ function behDisjoin( branchType, leftType, rightType ) {
 
 // ===== Other behavior operations ===================================
 
+// TODO: Actually implement some first-class behaviors we can call!
+function behCall( funcType ) {
+    if ( funcType.op !== "anytimeFn" )
+        throw new Error();
+    var result = {};
+    result.inType = typeTimes( funcType, funcType.demand );
+    result.outType = funcType.response;
+    result.install = function ( context, inSigs, outSigs ) {
+        var inSigFunc = inSigs.first.leafInfo;
+        var inSigParam = inSigs.second;
+        context.onBegin( function () {
+            // TODO: See if we end up entering an infinite loop with
+            // this.
+            if ( !inSigFunc.isConnected() )
+                return !"wasAbleToFinish";
+            
+            var delayMillis = 0;
+            var onBeginObj = makeOnBegin();
+            inSigFunc.doStaticInvoke( {
+                startMillis: context.startMillis,
+                membrane: context.membrane,
+                onBegin: onBeginObj.onBegin
+            }, delayMillis, inSigParam, outSigs );
+            onBeginObj.begin();
+            
+            return !!"wasAbleToFinish";
+        } );
+    };
+    return result;
+}
+
 function behDelay( delayMillis, type ) {
     if ( !isValidDuration( delayMillis ) )
         throw new Error();
@@ -785,19 +1068,31 @@ function behDelay( delayMillis, type ) {
     result.inType = type;
     result.outType = typePlusOffsetMillis( type, delayMillis );
     result.install = function ( context, inSigs, outSigs ) {
-        eachTypeAtomNodeZipper( type, _.idfn, function ( get ) {
-            var inSig = get( inSigs ).leafInfo;
-            var outSig = get( outSigs ).leafInfo;
-            inSig.readEachEntry( function ( entry ) {
-                outSig.history.addEntry( {
-                    maybeData: entry.maybeData,
-                    startMillis: entry.startMillis + delayMillis,
-                    maybeEndMillis:
-                        entry.maybeEndMillis === null ? null :
-                            { val: entry.maybeEndMillis.val +
-                                delayMillis }
+        eachTypeLeafNodeOver( inSigs, outSigs,
+            function ( type, inSig, outSig ) {
+            
+            if ( type.op === "atom" ) {
+                inSig.readEachEntry( function ( entry ) {
+                    outSig.history.addEntry( {
+                        maybeData: entry.maybeData,
+                        startMillis: entry.startMillis + delayMillis,
+                        maybeEndMillis:
+                            entry.maybeEndMillis === null ? null :
+                                { val: entry.maybeEndMillis.val +
+                                    delayMillis }
+                    } );
                 } );
-            } );
+            } else if ( type.op === "anytimeFn" ) {
+                outSig.onStaticInvoke( function (
+                    context, totalDelayMillis, inSigs, outSigs ) {
+                    
+                    inSig.doStaticInvoke(
+                        context, totalDelayMillis + delayMillis,
+                        inSigs, outSigs );
+                } );
+            } else {
+                throw new Error();
+            }
         } );
     };
     return result;
@@ -933,7 +1228,7 @@ function behZip() {
 // doesn't preserve duration coupling, this will pretend it responded
 // with a dummy value.
 //
-function behRpc( delayMillis ) {
+function behYield( delayMillis ) {
     if ( !isValidDuration( delayMillis ) )
         throw new Error();
     var result = {};
@@ -1039,6 +1334,7 @@ function makeTestForBehaviors() {
     membranePair.b.syncOnInDemandAvailable( function () {
         explicitlyIgnoreMembraneDemand( membranePair.b.membrane );
     } );
+    var onBeginObj = makeOnBegin();
     var step1 = makeLinkedSigPair( nowMillis );
     var step2 = makeLinkedSigPair( nowMillis );
     behSeqs(
@@ -1050,9 +1346,14 @@ function makeTestForBehaviors() {
             dom = linkMetadata.dom;
         } )
     ).install(
-        { startMillis: nowMillis, membrane: membranePair.b.membrane },
+        {
+            startMillis: nowMillis,
+            membrane: membranePair.b.membrane,
+            onBegin: onBeginObj.onBegin
+        },
         typeAtom( 0, step1.readable ),
         typeAtom( mouseDelayMillis, step2.writable ) );
+    onBeginObj.begin();
     step2.readable.readEachEntry( function ( entry ) {
         // Do nothing.
     } );

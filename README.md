@@ -12,8 +12,8 @@ for the RDP design.
 
 I've implemented a system for specifying and using a certain subset of
 RDP behaviors. This subset is an elegant system in itself, but it has
-no dynamic behavior support, and its behaviors are limited to a single
-partition.
+no library of first-class behaviors yet, and its behaviors are limited
+to a single partition.
 
 For the time being, I've been doing tests using two ad hoc I/O
 behaviors dedicated to very specific tasks:
@@ -24,14 +24,26 @@ behaviors dedicated to very specific tasks:
 Now that your expectations are low enough, feel free to take a look at
 [some Underreact test code in action](http://rocketnia.github.io/underreact/underreact-dynamic-test.html).
 
-### `behRpc()`
+### `behCall()`
 
-As an experimental way to communicate with outside systems, I model
-ambient access to a "membrane" that sends out demands to another
-system. This access is in the form of `behRpc`, a kind of yield
-operator which can pass a signal of serializable data to the
-environment and get another signal of serializable data in response,
-very much like a coroutine `yield`.
+Underreact models first-class behaviors in a different way than Sirea
+does. Invoking a behavior with behCall will not perform implicit
+synchronization or communication between partitions (if and when
+Underreact actually has partitions). This will be an efficient basis
+for abstraction, and it's the basis I plan to use when modeling
+capabilities, including resource spaces.
+
+Sirea's `beval` is still an important missing ingredient in
+Underreact, since it can promote data to code.
+
+### `behYield()`
+
+As an experimental way to communicate with outside systems, Underreact
+models ambient access to a "membrane" that sends out demands to
+another system. This access is in the form of `behYield`, an operator
+which can pass a signal of serializable data to the environment and
+get another signal of serializable data in response, very much like a
+coroutine.
 
 This direction would be expressive, but RDP is meant to be securable
 using object-capability model techniques, and I suspect this mechanism
