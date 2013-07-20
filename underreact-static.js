@@ -931,6 +931,8 @@ function behDisjoin( branchType, leftType, rightType ) {
                     processPending();
                 } );
             } else if ( type.op === "anytimeFn" ) {
+                // TODO: Whoops, this needs to filter the inputs based
+                // on the informants.
                 outSigLeft.addConnectionDependency( inSig );
                 outSigLeft.readFrom( inSig );
                 outSigRight.addConnectionDependency( inSig );
@@ -1070,6 +1072,13 @@ function behLiteralBeh( beh ) {
                 typeBeh, typeAnytimeFn( inSigs, outSigs, null ) )
                 throw new Error();
             // NOTE: The delayMillis doesn't matter.
+            
+            // The implementation of behMerge on behavior-carrying
+            // signals sends the input to both of the merged
+            // behaviors, expecting them to filter based on their
+            // signal's activity profile. We're doing one case of that
+            // filtering right now, by handling all inputs since this
+            // behavior-carrying signal is forever active.
             beh.install( context, inSigs, outSigs );
         } );
     };
