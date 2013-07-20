@@ -272,6 +272,12 @@ ActivityHistory.prototype.getAllEntries = function () {
     // they enjoy that kind of freedom! Let them eat copies.
     return this.entries_.slice();
 };
+ActivityHistory.prototype.isEmpty = function () {
+    // NOTE: This is a convenience method for getAllEntries, but it
+    // also avoids copying the Array.
+    return this.entries_[ 0 ].startMillis ===
+        entEnd( this.entries_[ 0 ] );
+};
 ActivityHistory.prototype.addEntry = function ( newEntry ) {
     
     // NOTE: If the newEntry has a startMillis equal to its

@@ -1,9 +1,9 @@
+// NOTE: The leafInfo parameters aren't actually part of the types for
+// equality purposes, but we use them to annotate the type tree with
+// metadata.
 function typeAtom( offsetMillis, leafInfo ) {
     if ( !isValidDuration( offsetMillis ) )
         throw new Error();
-    // NOTE: The leafInfo isn't actually part of the type for equality
-    // purposes, but we use it to annotate the type tree with
-    // metadata.
     return { op: "atom",
         offsetMillis: offsetMillis, leafInfo: leafInfo };
 }
@@ -203,6 +203,46 @@ function mapTypeLeafInfo( type, func ) {
     } );
 }
 
+function makeAnytimeFnInstallationPair() {
+    var doStaticInvoke = null;
+    var connectionDependencies = [];
+    var writable = {};
+    writable.addConnectionDependency = function ( dependency ) {
+        connectionDependencies.push( dependency );
+    };
+    writable.onStaticInvoke = function ( func ) {
+        if ( doStaticInvoke !== null || func === null )
+            throw new Error();
+        doStaticInvoke = func;
+    };
+    writable.readFrom = function ( readable ) {
+        // NOTE: This is just a convenience method.
+        
+        writable.addConnectionDependency( readable );
+        writable.onStaticInvoke(
+            function ( context, delayMillis, inSigs, outSigs ) {
+            
+            readable.doStaticInvoke(
+                context, delayMillis, inSigs, outSigs );
+        } );
+    };
+    var readable = {};
+    readable.isConnected = function () {
+        return doStaticInvoke !== null &&
+            _.arrAll( connectionDependencies, function ( dep ) {
+                return dep.isConnected();
+            } );
+    };
+    readable.doStaticInvoke = function (
+        context, delayMillis, inSigs, outSigs ) {
+        
+        if ( doStaticInvoke === null )
+            throw new Error();
+        doStaticInvoke( context, delayMillis, inSigs, outSigs );
+    };
+    return { writable: writable, readable: readable };
+}
+
 function makePairsForType( startMillis, type ) {
     var pairs = mapTypeLeafInfo( type, function ( type ) {
         if ( type.op === "atom" ) {
@@ -255,37 +295,6 @@ function makeOnBegin() {
 
 // ===== Behavior category ===========================================
 
-function makeAnytimeFnInstallationPair() {
-    var doStaticInvoke = null;
-    var writable = {};
-    writable.onStaticInvoke = function ( func ) {
-        if ( doStaticInvoke !== null || func === null )
-            throw new Error();
-        doStaticInvoke = func;
-    };
-    writable.readFrom = function ( readable ) {
-        // NOTE: This is just a convenience method for onStaticInvoke.
-        writable.onStaticInvoke(
-            function ( context, delayMillis, inSigs, outSigs ) {
-            
-            readable.doStaticInvoke(
-                context, delayMillis, inSigs, outSigs );
-        } );
-    };
-    var readable = {};
-    readable.isConnected = function () {
-        return doStaticInvoke !== null;
-    };
-    readable.doStaticInvoke = function (
-        context, delayMillis, inSigs, outSigs ) {
-        
-        if ( doStaticInvoke === null )
-            throw new Error();
-        doStaticInvoke( context, delayMillis, inSigs, outSigs );
-    };
-    return { writable: writable, readable: readable };
-}
-
 // TODO: See what this would be called in Sirea.
 function behId( type ) {
     var result = {};
@@ -300,6 +309,7 @@ function behId( type ) {
                     outSig.history.addEntry( entry );
                 } );
             } else if ( type.op === "anytimeFn" ) {
+                outSig.addConnectionDependency( inSig );
                 outSig.readFrom( inSig );
             } else {
                 throw new Error();
@@ -409,7 +419,9 @@ function behDup( type ) {
                     outSigSecond.history.addEntry( entry );
                 } );
             } else if ( type.op === "anytimeFn" ) {
+                outSigFirst.addConnectionDependency( inSig );
                 outSigFirst.readFrom( inSig );
+                outSigSecond.addConnectionDependency( inSig );
                 outSigSecond.readFrom( inSig );
             } else {
                 throw new Error();
@@ -626,6 +638,8 @@ function behMerge( type ) {
                     processPending();
                 } );
             } else if ( type.op === "anytimeFn" ) {
+                outSig.addConnectionDependency( inSigLeft );
+                outSig.addConnectionDependency( inSigRight );
                 outSig.onStaticInvoke( function (
                     context, delayMillis, inSigs, outSigs ) {
                     
@@ -917,7 +931,9 @@ function behDisjoin( branchType, leftType, rightType ) {
                     processPending();
                 } );
             } else if ( type.op === "anytimeFn" ) {
+                outSigLeft.addConnectionDependency( inSig );
                 outSigLeft.readFrom( inSig );
+                outSigRight.addConnectionDependency( inSig );
                 outSigRight.readFrom( inSig );
             } else {
                 throw new Error();
@@ -960,6 +976,7 @@ function behDisjoin( branchType, leftType, rightType ) {
                         }
                     } );
                 } else if ( type.op === "anytimeFn" ) {
+                    outSig.addConnectionDependency( inSig );
                     outSig.readFrom( inSig );
                 } else {
                     throw new Error();
@@ -979,6 +996,8 @@ function behDisjoin( branchType, leftType, rightType ) {
                     // here, since getAllEntries() already does it.
                     var conditionPending = branch.conditionPending.
                         getAllEntries().slice();
+                    var consumedEndMillis =
+                        conditionPending[ 0 ].startMillis;
                     
                     consumeEarliestEntries( [
                         conditionPending,
@@ -986,6 +1005,8 @@ function behDisjoin( branchType, leftType, rightType ) {
                     ], function ( earliestEntries ) {
                         var conditionEntry = earliestEntries[ 0 ];
                         var dataEntry = earliestEntries[ 1 ];
+                        
+                        consumedEndMillis = entEnd( dataEntry );
                         
                         var nullEntry = {
                             maybeData: null,
@@ -1019,7 +1040,7 @@ function behDisjoin( branchType, leftType, rightType ) {
                         }
                     } );
                     branch.conditionPending.forgetBeforeMillis(
-                        entsEnd( conditionPending ) );
+                        consumedEndMillis );
                 } );
             } );
         }
@@ -1030,7 +1051,32 @@ function behDisjoin( branchType, leftType, rightType ) {
 
 // ===== Other behavior operations ===================================
 
-// TODO: Actually implement some first-class behaviors we can call!
+// TODO: See what this would be called in Sirea, if anything.
+//
+// TODO: Implement some other kinds of first-class behaviors we can
+// call, such as closures or evaluated data.
+//
+function behLiteralBeh( beh ) {
+    var typeBeh = typeAnytimeFn( beh.inType, beh.outType, null );
+    
+    var result = {};
+    result.inType = typeOne();
+    result.outType = typeBeh;
+    result.install = function ( context, inSigs, outSigs ) {
+        outSigs.pairInfo.onStaticInvoke(
+            function ( context, delayMillis, inSigs, outSigs ) {
+            
+            if ( !typesUnify(
+                typeBeh, typeAnytimeFn( inSigs, outSigs, null ) )
+                throw new Error();
+            // NOTE: The delayMillis doesn't matter.
+            beh.install( context, inSigs, outSigs );
+        } );
+    };
+    return result;
+}
+
+// TODO: See what this would be called in Sirea, if anything.
 function behCall( funcType ) {
     if ( funcType.op !== "anytimeFn" )
         throw new Error();
@@ -1083,6 +1129,7 @@ function behDelay( delayMillis, type ) {
                     } );
                 } );
             } else if ( type.op === "anytimeFn" ) {
+                outSig.addConnectionDependency( inSig );
                 outSig.onStaticInvoke( function (
                     context, totalDelayMillis, inSigs, outSigs ) {
                     
@@ -1266,6 +1313,176 @@ function behYield( delayMillis ) {
         } );
     };
     return result;
+}
+
+// NOTE: We use a defer procedure as a parameter here, so that
+// feedback loops don't grind the entire page to a halt. However,
+// those loops will still execute forever, so be careful.
+//
+// TODO: Implement resource spaces so that we can provide dynamic
+// acquisition of demand monitors while permitting external
+// observation and extensibility.
+//
+// TODO: This currently returns a demander behavior and a monitor
+// behavior. Return a resource control behavior of some sort as well.
+//
+function behDemandMonitor( defer ) {
+    
+    var installedDemanders = [];
+    var createdDemandersPending = false;
+    var installedMonitors = [];
+    
+    function createDemandersPending() {
+        if ( createdDemandersPending )
+            return;
+        createdDemandersPending = true;
+        _.arrEach( installedMonitors, function ( monitor ) {
+            monitor.demandersPending = _.arrMap( installedDemanders,
+                function ( demander ) {
+                
+                return new ActivityHistory().init( {
+                    startMillis: demander.startMillis,
+                    syncOnAdd: function () {
+                        // Do nothing.
+                    },
+                    syncOnForget: function () {
+                        // Do nothing.
+                    }
+                } );
+            } );
+        } );
+    }
+    
+    var demander = {};
+    demander.inType = typeAtom( 0, null );
+    demander.outType = typeOne();
+    demander.install = function ( context, inSigs, outSigs ) {
+        var inSig = inSigs.leafInfo;
+        
+        var i = installedDemanders.length;
+        
+        installedDemanders.push(
+            { startMillis: context.startMillis } );
+        inSig.readEachEntry( function ( entry ) {
+            createDemandersPending();
+            _.arrEach( installedMonitors, function ( monitor ) {
+                monitor.demandersPending[ i ].addEntry( entry );
+                defer( function () {
+                    monitor.processPending();
+                } );
+            } );
+        } );
+    };
+    
+    var monitor = {};
+    monitor.inType = typeAtom( 0, null );
+    monitor.outType = typeAtom( 0, null );
+    monitor.install = function ( context, inSigs, outSigs ) {
+        var inSig = inSigs.leafInfo;
+        var outSig = outSigs.leafInfo;
+        
+        var demanderPending = new ActivityHistory().init( {
+            startMillis: context.startMillis,
+            syncOnAdd: function () {
+                // Do nothing.
+            },
+            syncOnForget: function () {
+                // Do nothing.
+            }
+        } );
+        var monitorPending = new ActivityHistory().init( {
+            startMillis: context.startMillis,
+            syncOnAdd: function () {
+                // Do nothing.
+            },
+            syncOnForget: function () {
+                // Do nothing.
+            }
+        } );
+        function processPending() {
+            
+            // TODO: See if we should really copy the Arrays here,
+            // since getAllEntries() already does it.
+            
+            var monitorEntries =
+                monitorPending.getAllEntries().slice();
+            var consumedEndMillis = monitorEntries[ 0 ].startMillis;
+            
+            consumeEarliestEntries( [ monitorEntries ].concat(
+                _.arrMap( monitorInfo.demandersPending,
+                    function ( demanderPending ) {
+                    
+                    return demanderPending.getAllEntries().slice();
+                } )
+            ), function ( earliestEntries ) {
+                var monitorEntry = earliestEntries[ 0 ];
+                var demandEntries = _.arrCut( earliestEntries, 1 );
+                
+                consumedEndMillis = entEnd( monitorEntry );
+                
+                var maybeData = null;
+                if ( monitorEntry.maybeData !== null ) {
+                    // NOTE: We deduplicate the demands by putting
+                    // them into a set along the way.
+                    var set = new Map().init( {
+                        keyHash: function ( inputData ) {
+                            return dataHash( inputData );
+                        },
+                        keyIsoAssumingHashIso: function ( a, b ) {
+                            return dataIsoAssumingHashIso( a, b );
+                        }
+                    } );
+                    maybeData = { val: _.acc( function ( y ) {
+                        _.arrEach( demandEntries, function ( entry ) {
+                            if ( set.has( entry ) )
+                                return;
+                            set.set( entry, true );
+                            y( entry );
+                        } );
+                    } ) };
+                }
+                
+                outSig.addEntry( {
+                    maybeData: maybeData,
+                    startMillis: monitorEntry.startMillis,
+                    maybeEndMillis: monitorEntry.maybeEndMillis
+                } );
+            } );
+            
+            monitorPending.forgetBeforeMillis( consumedEndMillis );
+            
+            if ( !monitorPending.isEmpty() ) {
+                var nextMonitorEntry =
+                    monitorPending.getAllEntries()[ 0 ];
+                if ( nextMonitorEntry.maybeData === null ) {
+                    outSig.addEntry( nextMonitorEntry );
+                    consumedEndMillis = entEnd( nextMonitorEntry );
+                    monitorPending.forgetBeforeMillis(
+                        consumedEndMillis );
+                }
+            }
+            
+            _.arrEach( monitorInfo.demandersPending,
+                function ( pending ) {
+                
+                pending.forgetBeforeMillis( consumedEndMillis );
+            } );
+        }
+        var monitorInfo = {
+            demandersPending: null,
+            monitorPending: monitorPending,
+            processPending: processPending
+        };
+        installedMonitors.push( monitorInfo );
+        inSig.readEachEntry( function ( entry ) {
+            monitorPending.addEntry( entry );
+            defer( function () {
+                processPending();
+            } );
+        } );
+    };
+    
+    return { demander: demander, monitor: monitor };
 }
 
 // TODO: Implement some additional axiomatic operations like these
