@@ -932,7 +932,10 @@ function behDisjoin( branchType, leftType, rightType ) {
                 } );
             } else if ( type.op === "anytimeFn" ) {
                 // TODO: Whoops, this needs to filter the inputs based
-                // on the informants.
+                // on the informants... which means the output
+                // behaviors can only be called at very specific time
+                // offsets so they can be aligned with the evidence.
+                // Darn.
                 outSigLeft.addConnectionDependency( inSig );
                 outSigLeft.readFrom( inSig );
                 outSigRight.addConnectionDependency( inSig );
@@ -1079,6 +1082,15 @@ function behLiteralBeh( beh ) {
             // signal's activity profile. We're doing one case of that
             // filtering right now, by handling all inputs since this
             // behavior-carrying signal is forever active.
+            //
+            // TODO: Wait a second, this signal isn't necessarily
+            // forever active. Its activity profile is indeterminate,
+            // since it comes from typeOne(), which can be introduced
+            // via behFstIntro() or behDrop() to any signal with any
+            // activity profile. Figure out if the very type signature
+            // of behLiteralBeh() is problematic. Perhaps there's
+            // something we can do about behMerge instead.
+            //
             beh.install( context, inSigs, outSigs );
         } );
     };
