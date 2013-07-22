@@ -19,8 +19,8 @@ function typePlus( left, right ) {
 function typeZero() {
     return { op: "zero" };
 }
-function typeAnytimeFn( demand, response, leafInfo ) {
-    return { op: "anytimeFn",
+function typeAnytimeFn( offsetMillis, demand, response, leafInfo ) {
+    return { op: "anytimeFn", offsetMillis: offsetMillis,
         demand: demand, response: response, leafInfo: leafInfo };
 }
 
@@ -52,6 +52,9 @@ function typesAreEqual( offsetMillis, a, b ) {
         } else if ( op === "zero" ) {
             // Do nothing.
         } else if ( op === "anytimeFn" ) {
+            if ( types.a.offsetMillis + offsetMillis !==
+                types.b.offsetMillis )
+                return false;
             return typesUnify( types.a.demand, types.b.demand ) !==
                 null;
         } else {
@@ -91,6 +94,12 @@ function typesUnify( a, b ) {
         } else if ( op === "zero" ) {
             // Do nothing.
         } else if ( op === "anytimeFn" ) {
+            var thisOffsetMillis =
+                types.b.offsetMillis - types.a.offsetMillis;
+            if ( offsetMillis === null )
+                offsetMillis = thisOffsetMillis;
+            else if ( offsetMillis !== thisOffsetMillis )
+                return null;
             // TODO: Do this without recursion.
             var unifiedDemand =
                 typesUnify( types.a.demand, types.b.demand );
@@ -108,6 +117,47 @@ function typesUnify( a, b ) {
         }
     }
     return { offsetMillis: offsetMillis };
+}
+
+function getAllCoordinates( type ) {
+    return _.acc( function ( y ) {
+        eachTypeLeafNode( type, function ( type ) {
+            if ( type.op === "atom" ) {
+                y( { offsetMillis: type.offsetMillis } );
+            } else if ( type.op === "anytimeFn" ) {
+                // TODO: Use some kind of anyTypeLeafNode to do this,
+                // instead of building an Array and treating it as a
+                // boolean.
+                if ( getAllCoordinates( type.demand ).length !== 0 )
+                    y( { offsetMillis: type.offsetMillis } );
+            } else {
+                throw new Error();
+            }
+        } );
+    } );
+}
+
+function typesSupplyActivityEvidence(
+    knownActivityTypes, unknownActivityType ) {
+    
+    var knownActivityCoordinates =
+        _.arrMappend( knownActivityTypes, function ( type ) {
+            return getAllCoordinates( type );
+        } );
+    var unknownActivityCoordinates =
+        getAllCoordinates( unknownActivityType );
+    return _.arrAll( unknownActivityCoordinates,
+        function ( unknownActivityCoordinate ) {
+        
+        return _.arrAny( knownActivityCoordinates,
+            function ( knownActivityCoordinate ) {
+            
+            // NOTE: In general, we should also check that the
+            // partitions match.
+            return unknownActivityCoordinate.offsetMillis ===
+                knownActivityCoordinate.offsetMillis;
+        } );
+    } );
 }
 
 function mapTypeLeafNodes( type, func ) {
@@ -195,7 +245,7 @@ function mapTypeLeafInfo( type, func ) {
         if ( type.op === "atom" ) {
             return typeAtom( type.offsetMillis, func( type ) );
         } else if ( type.op === "anytimeFn" ) {
-            return typeAnytimeFn(
+            return typeAnytimeFn( type.offsetMillis,
                 type.demand, type.response, func( type ) );
         } else {
             throw new Error();
@@ -203,10 +253,14 @@ function mapTypeLeafInfo( type, func ) {
     } );
 }
 
-function makeAnytimeFnInstallationPair() {
+// TODO: Change this so it manages a set of activity histories rather
+// than a single history.
+function makeAnytimeFnInstallationPair( startMillis ) {
+    var sigPair = makeLinkedSigPair( startMillis );
     var doStaticInvoke = null;
     var connectionDependencies = [];
     var writable = {};
+    writable.activitySig = sigPair.writable;
     writable.addConnectionDependency = function ( dependency ) {
         connectionDependencies.push( dependency );
     };
@@ -219,6 +273,9 @@ function makeAnytimeFnInstallationPair() {
         // NOTE: This is just a convenience method.
         
         writable.addConnectionDependency( readable );
+        readable.activitySig.readEachEntry( function ( entry ) {
+            writable.activitySig.history.addEntry( entry );
+        } );
         writable.onStaticInvoke(
             function ( context, delayMillis, inSigs, outSigs ) {
             
@@ -227,6 +284,7 @@ function makeAnytimeFnInstallationPair() {
         } );
     };
     var readable = {};
+    readable.activitySig = sigPair.readable;
     readable.isConnected = function () {
         return doStaticInvoke !== null &&
             _.arrAll( connectionDependencies, function ( dep ) {
@@ -248,7 +306,7 @@ function makePairsForType( startMillis, type ) {
         if ( type.op === "atom" ) {
             return makeLinkedSigPair( startMillis );
         } else if ( type.op === "anytimeFn" ) {
-            return makeAnytimeFnInstallationPair();
+            return makeAnytimeFnInstallationPair( startMillis );
         } else {
             throw new Error();
         }
@@ -309,7 +367,6 @@ function behId( type ) {
                     outSig.history.addEntry( entry );
                 } );
             } else if ( type.op === "anytimeFn" ) {
-                outSig.addConnectionDependency( inSig );
                 outSig.readFrom( inSig );
             } else {
                 throw new Error();
@@ -419,9 +476,7 @@ function behDup( type ) {
                     outSigSecond.history.addEntry( entry );
                 } );
             } else if ( type.op === "anytimeFn" ) {
-                outSigFirst.addConnectionDependency( inSig );
                 outSigFirst.readFrom( inSig );
-                outSigSecond.addConnectionDependency( inSig );
                 outSigSecond.readFrom( inSig );
             } else {
                 throw new Error();
@@ -638,39 +693,84 @@ function behMerge( type ) {
                     processPending();
                 } );
             } else if ( type.op === "anytimeFn" ) {
+                
+                var invocations = [];
+                
+                var inSigLeftForActivity =
+                    makeLinkedSigPair( context.startMillis );
+                inSig.readEachEntry( function ( entry ) {
+                    inSigLeftForActivity.writable.history.addEntry(
+                        entry );
+                    _.arrEach( invocations, function ( invocation ) {
+                        invocation.leftActivity.history.addEntry(
+                            entry );
+                    } );
+                } );
+                var inSigRightForActivity =
+                    makeLinkedSigPair( context.startMillis );
+                inSig.readEachEntry( function ( entry ) {
+                    inSigRightForActivity.writable.history.addEntry(
+                        entry );
+                    _.arrEach( invocations, function ( invocation ) {
+                        invocation.rightActivity.history.addEntry(
+                            entry );
+                    } );
+                } );
+                
                 outSig.addConnectionDependency( inSigLeft );
                 outSig.addConnectionDependency( inSigRight );
+                behMerge( typeAtom( 0, null ) ).install( context,
+                    typePlus(
+                        typeAtom( 0, inSigLeftForActivity ),
+                        typeAtom( 0, inSigRightForActivity ) ),
+                    typeAtom( 0, outSig.activitySig )
+                );
                 outSig.onStaticInvoke( function (
                     context, delayMillis, inSigs, outSigs ) {
                     
+                    var leftActivityPair =
+                        makeLinkedSigPair( context.startMillis );
+                    var rightActivityPair =
+                        makeLinkedSigPair( context.startMillis );
+                    invocations.push( {
+                        leftActivty: leftActivityPair.writable,
+                        rightActivity: rightActivityPair.writable
+                    } );
+                    
+                    var inSigLeftPairs = makePairsForType(
+                        context.startMillis, type.demand );
+                    var inSigRightPairs = makePairsForType(
+                        context.startMillis, type.demand );
                     var outSigLeftPairs = makePairsForType(
                         context.startMillis, type.response );
                     var outSigRightPairs = makePairsForType(
                         context.startMillis, type.response );
                     
+                    var atom = typeAtom( 0, null );
+                    
                     // Split the inputs.
-                    //
-                    // NOTE: We send the inputs to both merged
-                    // behaviors. In order to avoid violations of
-                    // duration coupling, every implementation of
-                    // onStaticInvoke/doStaticInvoke must filter its
-                    // input signal according to the true activity
-                    // profile of the behavior-carrying signal.
-                    //
-                    // The typePlus() operator represents a choice the
-                    // downstream code can't control but the upstream
-                    // code can, so we shunt the filtering
-                    // responsibility upstream.
-                    //
+                    behSeqs(
+                        behDisjoin( type.demand, atom, atom ),
+                        behEither( behFst( type.demand, atom ),
+                            behFst( type.demand, atom ) )
+                    ).install( context,
+                        typeTimes( inSigs, typePlus(
+                            typeAtom( 0, leftActivityPair.readable ),
+                            typeAtom( 0, rightActivityPair.readable )
+                        ) ),
+                        typePlus(
+                            inSigLeftPairs.writable,
+                            inSigRightPairs.writable )
+                    );
+                    
                     inSigLeft.doStaticInvoke( context, delayMillis,
-                        inSigs, outSigLeftPairs.writable );
+                        inSigLeftPairs.readable,
+                        outSigLeftPairs.writable );
                     inSigRight.doStaticInvoke( context, delayMillis,
-                        inSigs, outSigRightPairs.writable );
+                        inSigRightPairs.readable,
+                        outSigRightPairs.writable );
                     
                     // Merge the outputs.
-                    //
-                    // Marvel at this convoluted recurrence.
-                    //
                     behMerge( type.response ).install( context,
                         typePlus(
                             outSigLeftPairs.readable,
@@ -728,6 +828,10 @@ function behVacuous( type ) {
             }
             
             function ignoreAnytimeFn( outSig ) {
+                context.onBegin( function () {
+                    outSig.activitySig.finishData(
+                        context.startMillis );
+                } );
                 outSig.onStaticInvoke( function (
                     context, delayMillis, inSigs, outSigs ) {
                     
@@ -736,16 +840,11 @@ function behVacuous( type ) {
                         
                         if ( type.op === "atom" ) {
                             inSig.readEachEntry( function ( entry ) {
-                                // Do nothing. The implementation of
-                                // behMerge on behavior-carrying
-                                // signals sends the input to both of
-                                // the merged behaviors, expecting
-                                // them to filter based on their
-                                // signal's activity profile. We're
-                                // doing one case of that filtering
-                                // right now, by ignoring all inputs
-                                // since this behavior-carrying signal
-                                // is forever inactive.
+                                // Do nothing.
+                                
+                                // TODO: See if we should signal a
+                                // violaton of duration coupling.
+//                                throw new Error();
                             } );
                             context.onBegin( function () {
                                 outSig.history.finishData(
@@ -858,32 +957,8 @@ function behConjoin( branchType, leftType, rightType ) {
 // same for all atomic signals.
 //
 function behDisjoin( branchType, leftType, rightType ) {
-    function getAllAtomNodes( branchType ) {
-        return _.acc( function ( y ) {
-            eachTypeLeafNode( branchType, function ( type ) {
-                if ( type.op === "atom" ) {
-                    y( type );
-                } else if ( type.op === "anytimeFn" ) {
-                    // Do nothing.
-                } else {
-                    throw new Error();
-                }
-            } );
-        } );
-    }
-    var branchAtomNodes = getAllAtomNodes( branchType );
-    var leftAtomNodes = getAllAtomNodes( leftType );
-    var rightAtomNodes = getAllAtomNodes( rightType );
-    if ( !_.arrAll( branchAtomNodes, function ( branchAtomNode ) {
-        return _.arrAny( _.arrPlus( leftAtomNodes, rightAtomNodes ),
-            function ( informantAtomNode ) {
-            
-            // NOTE: In general, we should also check that the
-            // partitions match.
-            return branchAtomNode.offsetMillis ===
-                informantAtomNode.offsetMillis;
-        } );
-    } ) )
+    if ( !typesSupplyActivityEvidence(
+        [ leftType, rightType ], branchType ) )
         throw new Error();
     var result = {};
     result.inType =
@@ -936,9 +1011,7 @@ function behDisjoin( branchType, leftType, rightType ) {
                 // behaviors can only be called at very specific time
                 // offsets so they can be aligned with the evidence.
                 // Darn.
-                outSigLeft.addConnectionDependency( inSig );
                 outSigLeft.readFrom( inSig );
-                outSigRight.addConnectionDependency( inSig );
                 outSigRight.readFrom( inSig );
             } else {
                 throw new Error();
@@ -951,38 +1024,64 @@ function behDisjoin( branchType, leftType, rightType ) {
             eachTypeLeafNodeOver( inSigs, outSigs,
                 function ( type, inSig, outSig ) {
                 
+                function addToBin( entry ) {
+                    if ( !bin )
+                        return;
+                    // NOTE: Inactivity on one side essentially counts
+                    // as activity on the other side, so we track the
+                    // branched activity profile in a single
+                    // always-active history. It'll be masked by the
+                    // branching signal's activity profile later on.
+                    var conditionEntry = {
+                        maybeData: { val: entry.maybeData === null ?
+                            oppositeCondition : condition },
+                        startMillis: entry.startMillis,
+                        maybeEndMillis: entry.maybeEndMillis
+                    };
+                    _.arrEach( bin.branchesPending,
+                        function ( branch ) {
+                        
+                        branch.conditionPending.addEntry(
+                            conditionEntry );
+                    } );
+                    processPending();
+                }
+                
                 if ( type.op === "atom" ) {
                     var bin = getBin( type.offsetMillis );
                     inSig.readEachEntry( function ( entry ) {
                         outSig.history.addEntry( entry );
-                        if ( bin ) {
-                            // NOTE: Inactivity on one side
-                            // essentially counts as activity on the
-                            // other side, so we track the branched
-                            // activity profile in a single
-                            // always-active history. It'll be masked
-                            // by the branching signal's activity
-                            // profile later on.
-                            var conditionEntry = {
-                                maybeData:
-                                    { val: entry.maybeData === null ?
-                                        oppositeCondition :
-                                        condition },
-                                startMillis: entry.startMillis,
-                                maybeEndMillis: entry.maybeEndMillis
-                            };
-                            _.arrEach( bin.branchesPending,
-                                function ( branch ) {
-                                
-                                branch.conditionPending.addEntry(
-                                    conditionEntry );
-                            } );
-                            processPending();
-                        }
+                        addToBin( entry );
                     } );
                 } else if ( type.op === "anytimeFn" ) {
+                    var bin = getBin( type.offsetMillis );
+                    
+                    // If this behavior-carrying signal doesn't have
+                    // any inputs in this partition, then its activity
+                    // profile doesn't need to exist in this
+                    // partition, so we don't use it as an informant.
+                    //
+                    // TODO: Use some kind of anyTypeLeafNode to do
+                    // this, instead of building an Array and treating
+                    // it as a boolean.
+                    //
+                    if ( getAllCoordinates( type.demand ).length ===
+                        0 )
+                        bin = false;
+                    
                     outSig.addConnectionDependency( inSig );
-                    outSig.readFrom( inSig );
+                    inSig.activitySig.readEachEntry(
+                        function ( entry ) {
+                        
+                        outSig.activitySig.history.addEntry( entry );
+                        addToBin( entry );
+                    } );
+                    outSig.onStaticInvoke( function (
+                        context, delayMillis, inSigs, outSigs ) {
+                        
+                        inSig.doStaticInvoke(
+                            context, delayMillis, inSigs, outSigs );
+                    } );
                 } else {
                     throw new Error();
                 }
@@ -1056,42 +1155,102 @@ function behDisjoin( branchType, leftType, rightType ) {
 
 // ===== Other behavior operations ===================================
 
+function delayAddEntry( outSig, delayMillis, entry ) {
+    outSig.history.addEntry( {
+        maybeData: entry.maybeData,
+        startMillis: entry.startMillis + delayMillis,
+        maybeEndMillis: entry.maybeEndMillis === null ? null :
+            { val: entry.maybeEndMillis.val + delayMillis }
+    } );
+}
+
+function delayAddAtomSig( outSig, delayMillis, inSig ) {
+    inSig.readEachEntry( function ( entry ) {
+        delayAddEntry( outSig, delayMillis, entry );
+    } );
+}
+
 // TODO: See what this would be called in Sirea, if anything.
 //
 // TODO: Implement some other kinds of first-class behaviors we can
-// call, such as closures or evaluated data.
+// call, such as evaluated data.
 //
-function behLiteralBeh( beh ) {
-    var typeBeh = typeAnytimeFn( beh.inType, beh.outType, null );
+function behClosure( beh ) {
+    var inputPairType = beh.inType;
+    if ( beh.inType.op !== "times" )
+        throw new Error();
+    var encapsulatedType = beh.inType.first;
+    var paramType = beh.inType.second;
+    
+    if ( !typesSupplyActivityEvidence(
+        [ encapsulatedType ], paramType ) )
+        throw new Error();
+    
+    var closedType = typeAnytimeFn( 0, paramType, beh.outType, null );
     
     var result = {};
-    result.inType = typeOne();
-    result.outType = typeBeh;
-    result.install = function ( context, inSigs, outSigs ) {
-        outSigs.pairInfo.onStaticInvoke(
-            function ( context, delayMillis, inSigs, outSigs ) {
+    result.inType = encapsulatedType;
+    result.outType = closedType;
+    result.install = function (
+        context, inSigsEncapsulated, outSigsFunc ) {
+        
+        var invocations = [];
+        
+        // TODO: See if we're handling the offsetMillis properly. This
+        // could be a serious problem. Ah, we probably need to change
+        // makeAnytimeFnInstallationPair so it manages a set of
+        // activity histories rather than a single history.
+        function addActivity( offsetMillis, entry ) {
+            delayAddEntry( outSigsFunc.activitySig, -offsetMillis, {
+                maybeData: entry.maybeData === null ? null : [],
+                startMillis: entry.startMillis,
+                maybeEndMillis: entry.maybeEndMillis
+            } );
+        }
+        
+        eachTypeLeafNodeZipper( inSigsEncapsulated, _.idfn,
+            function ( get ) {
             
-            if ( !typesUnify(
-                typeBeh, typeAnytimeFn( inSigs, outSigs, null ) )
+            var type = get( inSigsEncapsulated );
+            var inSig = type.leafInfo;
+            
+            if ( type.op === "atom" ) {
+                inSig.readEachEntry( function ( entry ) {
+                    addActivity( type.offsetMillis, entry );
+                    _.arrEach( invocations, function ( invocation ) {
+                        var writable = get( invocation.writables );
+                        delayAddEntry(
+                            writable, invocation.delayMillis, entry );
+                    } );
+                } );
+            } else if ( type.op === "anytimeFn" ) {
+                inSig.activitySig.readEachEntry( function ( entry ) {
+                    addActivity( type.offsetMillis, entry );
+                } );
+            } else {
                 throw new Error();
-            // NOTE: The delayMillis doesn't matter.
+            }
+        } );
+        
+        outSigsFunc.pairInfo.onStaticInvoke( function (
+            context, delayMillis, inSigsParam, outSigsResult ) {
             
-            // The implementation of behMerge on behavior-carrying
-            // signals sends the input to both of the merged
-            // behaviors, expecting them to filter based on their
-            // signal's activity profile. We're doing one case of that
-            // filtering right now, by handling all inputs since this
-            // behavior-carrying signal is forever active.
-            //
-            // TODO: Wait a second, this signal isn't necessarily
-            // forever active. Its activity profile is indeterminate,
-            // since it comes from typeOne(), which can be introduced
-            // via behFstIntro() or behDrop() to any signal with any
-            // activity profile. Figure out if the very type signature
-            // of behLiteralBeh() is problematic. Perhaps there's
-            // something we can do about behMerge instead.
-            //
-            beh.install( context, inSigs, outSigs );
+            if ( !typesUnify( closedType,
+                typeAnytimeFn(
+                    0, inSigsParam, outSigsResult, null ) ) )
+                throw new Error();
+            
+            var delayedEncapsulatedPairs = makePairsForType(
+                context.startMillis, encapsulatedType );
+            
+            invocations.push( {
+                writables: delayedEncapsulatedPairs.writables
+            } );
+            
+            beh.install( context,
+                typeTimes( delayedEncapsulatedPairs.readables,
+                    inSigsParam ),
+                outSigsResult );
         } );
     };
     return result;
@@ -1139,18 +1298,11 @@ function behDelay( delayMillis, type ) {
             function ( type, inSig, outSig ) {
             
             if ( type.op === "atom" ) {
-                inSig.readEachEntry( function ( entry ) {
-                    outSig.history.addEntry( {
-                        maybeData: entry.maybeData,
-                        startMillis: entry.startMillis + delayMillis,
-                        maybeEndMillis:
-                            entry.maybeEndMillis === null ? null :
-                                { val: entry.maybeEndMillis.val +
-                                    delayMillis }
-                    } );
-                } );
+                delayAddAtomSig( outSig, delayMillis, inSig );
             } else if ( type.op === "anytimeFn" ) {
                 outSig.addConnectionDependency( inSig );
+                delayAddAtomSig( outSig.activitySig,
+                    delayMillis, inSig.activitySig );
                 outSig.onStaticInvoke( function (
                     context, totalDelayMillis, inSigs, outSigs ) {
                     
