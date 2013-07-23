@@ -214,16 +214,7 @@ function makeTestForResponseOverLinkedPair() {
     return result;
 }
 
-function makeTestForBehaviors() {
-    // NOTE: Although we delay the mouse-measurement demand by two
-    // seconds, we demand the measurement at the midpoint between our
-    // demand and the response, so we actually observe a delay of only
-    // half that interval.
-    var mouseDelayMillis = 2000;
-    var measurementDelayMillis = mouseDelayMillis / 2;
-    
-    var dom = null;
-    
+function convenientlyInstallBehavior( delayMillis, beh ) {
     var nowMillis = new Date().getTime();
     function deferForBatching( func ) {
         setTimeout( function () {
@@ -241,22 +232,15 @@ function makeTestForBehaviors() {
     var onBeginObj = makeOnBegin();
     var step1 = makeLinkedSigPair( nowMillis );
     var step2 = makeLinkedSigPair( nowMillis );
-    behSeqs(
-        behDelay( measurementDelayMillis, typeAtom( 0, null ) ),
-        behMouseQuery(),
-        behDelay( mouseDelayMillis - measurementDelayMillis,
-            typeAtom( 0, null ) ),
-        behDomDiagnostic( function ( linkMetadata ) {
-            dom = linkMetadata.dom;
-        } )
-    ).install(
+    beh.install(
         {
             startMillis: nowMillis,
             membrane: membranePair.b.membrane,
             onBegin: onBeginObj.onBegin
         },
         typeAtom( 0, step1.readable ),
-        typeAtom( mouseDelayMillis, step2.writable ) );
+        typeAtom( delayMillis, step2.writable )
+    );
     onBeginObj.begin();
     step2.readable.readEachEntry( function ( entry ) {
         // Do nothing.
@@ -271,13 +255,33 @@ function makeTestForBehaviors() {
     setInterval( function () {
         var nowMillis = new Date().getTime();
         step1.writable.history.setData(
-            JSON.stringify( measurementDelayMillis ),
-            nowMillis, nowMillis + stabilityMillis );
+            [], nowMillis, nowMillis + stabilityMillis );
         membranePair.a.membrane.raiseOtherOutPermanentUntilMillis(
             nowMillis + otherOutStabilityMillis );
         membranePair.b.membrane.raiseOtherOutPermanentUntilMillis(
             nowMillis + otherOutStabilityMillis );
     }, intervalMillis );
+}
+
+function makeTestForBehaviors() {
+    // NOTE: Although we delay the mouse-measurement demand by two
+    // seconds, we demand the measurement at the midpoint between our
+    // demand and the response, so we actually observe a delay of only
+    // half that interval.
+    var mouseDelayMillis = 2000;
+    var measurementDelayMillis = mouseDelayMillis / 2;
+    
+    var dom = null;
+    
+    convenientlyInstallBehavior( mouseDelayMillis, behSeqs(
+        behDelay( measurementDelayMillis, typeAtom( 0, null ) ),
+        behMouseQuery(),
+        behDelay( mouseDelayMillis - measurementDelayMillis,
+            typeAtom( 0, null ) ),
+        behDomDiagnostic( function ( linkMetadata ) {
+            dom = linkMetadata.dom;
+        } )
+    ) );
     
     return { dom: dom };
 }
