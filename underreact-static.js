@@ -1915,30 +1915,178 @@ function behDemandMonitor( defer ) {
 // serializable data, so they're not as relevant here.
 
 
-// ===== Ad hoc side effects =========================================
+// ===== Low-accuracy event integration and ad hoc side effects ======
 
-function behMouseQuery() {
+function behEventfulSource( opts ) {
+    opts = _.opt( opts ).or( {
+        apologyVal: "",
+        listenOnUpdate: function ( listener ) {
+            // Do nothing.
+        },
+        // TODO: Keep tuning these constants based on the interval
+        // frequency we actually achieve, rather than the one we shoot
+        // for.
+        intervalMillis: 100,  // 10,
+        stabilityMillis: 500  // 200
+    } ).bam();
+    if ( !(true
+        && isValidData( opts.apologyVal )
+        && _.isFunction( opts.listenOnUpdate )
+        && isValidDuration( opts.intervalMillis )
+        && isValidDuration( opts.stabilityMillis )
+    ) )
+        throw new Error();
+    
     var result = {};
     result.inType = typeAtom( 0, null );
     result.outType = typeAtom( 0, null );
     result.install = function ( context, inSigs, outSigs ) {
         var inSig = inSigs.leafInfo;
         var outSig = outSigs.leafInfo;
-        linkMouseQuery( inSig, outSig );
+        
+        var currentVal = opts.apologyVal;
+        opts.listenOnUpdate.call( {}, function ( newVal ) {
+            currentVal = newVal;
+        } );
+        var responsesToGive = [];
+        inSig.readEachEntry( function ( entry ) {
+            if ( entry.maybeEndMillis.val <= entry.startMillis ) {
+                // Don't bother queuing this response-to-give.
+                return;
+            }
+            responsesToGive.push( {
+                active: entry.maybeData !== null,
+                startMillis: entry.startMillis,
+                maybeEndMillis: entry.maybeEndMillis
+            } );
+            handleInactive();
+        } );
+        function handleInactive() {
+            while ( responsesToGive.length !== 0 ) {
+                var rtg = responsesToGive[ 0 ];
+                if ( rtg.active )
+                    break;
+                outSig.history.addEntry( {
+                    maybeData: null,
+                    startMillis: rtg.startMillis,
+                    maybeEndMillis: rtg.maybeEndMillis
+                } );
+                responsesToGive.shift();
+            }
+        }
+        setInterval( function () {
+            var startToSendMillis = new Date().getTime();
+            var endToSendMillis =
+                startToSendMillis + opts.stabilityMillis;
+            
+            while ( true ) {
+                handleInactive();
+                if ( responsesToGive.length === 0 ) {
+                    // TODO: We have a measurement, but the program
+                    // logic hasn't gotten far enough along to request
+                    // it yet. See if we should store this measurement
+                    // and use it when the program gets to that point.
+                    break;
+                }
+                
+                // If the measured interval is too early for the next
+                // requested measurement, we're done responding for
+                // now.
+                if ( endToSendMillis <
+                    responsesToGive[ 0 ].startMillis )
+                    break;
+                
+                var rtg = responsesToGive.shift();
+                
+                // If the requested measurement is earlier than the
+                // measured interval, just apologize.
+                if ( rtg.maybeEndMillis.val < startToSendMillis ) {
+                    outSig.history.setData( opts.apologyVal,
+                        rtg.startMillis, rtg.maybeEndMillis.val );
+                    continue;
+                }
+                
+                var thisStartToSendMillis =
+                    Math.max( rtg.startMillis, startToSendMillis );
+                var thisEndToSendMillis = Math.min(
+                    rtg.maybeEndMillis.val, endToSendMillis );
+                outSig.history.setData( opts.apologyVal,
+                    rtg.startMillis, thisStartToSendMillis );
+                outSig.history.setData( currentVal,
+                    thisStartToSendMillis, thisEndToSendMillis );
+                if ( endToSendMillis < rtg.maybeEndMillis.val ) {
+                    responsesToGive.unshift( {
+                        active: true,
+                        startMillis: endToSendMillis,
+                        maybeEndMillis: rtg.maybeEndMillis
+                    } );
+                    break;
+                }
+            }
+        }, opts.intervalMillis );
     };
     return result;
 }
 
-function behDomDiagnostic( syncOnLinkMetadata ) {
+function behEventfulTarget( opts ) {
+    opts = _.opt( opts ).or( {
+        onUpdate: function ( newVal ) {
+            // Do nothing.
+        }
+    } ).bam();
+    if ( !(true
+        && _.isFunction( opts.onUpdate )
+    ) )
+        throw new Error();
+    
     var result = {};
     result.inType = typeAtom( 0, null );
     result.outType = typeAtom( 0, null );
     result.install = function ( context, inSigs, outSigs ) {
         var inSig = inSigs.leafInfo;
         var outSig = outSigs.leafInfo;
-        syncOnLinkMetadata( linkDomDiagnostic( inSig, outSig ) );
+        
+        var sentMillis = -1 / 0;
+        
+        inSig.readEachEntry( function ( entry ) {
+            outSig.history.addEntry( entry );
+            setTimeout( function () {
+                // In case the setTimeout calls get out of order,
+                // don't send this value.
+                if ( entry.startMillis < sentMillis )
+                    return;
+                sentMillis = entry.startMillis;
+                
+                opts.onUpdate.call( {}, entry.maybeData );
+            }, entry.startMillis - new Date().getTime() );
+        } );
     };
     return result;
+}
+
+function behMouseQuery( opts ) {
+    return behEventfulSource( {
+        apologyVal: JSON.stringify( null ),
+        listenOnUpdate: function ( listener ) {
+            _.appendDom( window, { mousemove: function ( e ) {
+                listener(
+                    JSON.stringify( [ e.clientX, e.clientY ] ) );
+            } } );
+        },
+        // TODO: Keep tuning these constants based on the interval
+        // frequency we actually achieve, rather than the one we shoot
+        // for.
+        intervalMillis: 100,  // 10,
+        stabilityMillis: 500  // 200
+    } );
+}
+
+function behDomDiagnostic( syncOnLinkMetadata ) {
+    var display = _.dom( "div", JSON.stringify( null ) );
+    syncOnLinkMetadata( { dom: display } );
+    return behEventfulTarget( { onUpdate: function ( newMaybeVal ) {
+        _.dom( display, JSON.stringify( newMaybeVal ) );
+    } } );
 }
 
 
