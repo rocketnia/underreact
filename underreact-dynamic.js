@@ -124,6 +124,17 @@ Map.prototype.each = function ( body ) {
         return false;
     } );
 };
+// NOTE: This passes in ( v, k ) instead of ( k, v ).
+Map.prototype.map = function ( func ) {
+    var result = new Map().init( {
+        keyHash: this.keyHash_,
+        keyIsoAssumingHashIso: this.keyIsoAssumingHashIso_
+    } );
+    this.each( function ( k, v ) {
+        result.set( k, func( v, k ) );
+    } );
+    return result;
+};
 
 function ElasticMap() {}
 ElasticMap.prototype.init = function ( opts ) {
@@ -159,6 +170,18 @@ ElasticMap.prototype.retract = function () {
     } );
     return isEmpty;
 };
+
+function arrMin( arr, func ) {
+    return _.arrFoldl( 1 / 0, arr, function ( soFar, item ) {
+        return Math.min( soFar, func( item ) );
+    } );
+}
+
+function arrMax( arr, func ) {
+    return _.arrFoldl( 1 / 0, arr, function ( soFar, item ) {
+        return Math.max( soFar, func( item ) );
+    } );
+}
 
 function isValidTime( x ) {
     return +x === x && 1 / x !== 0;
@@ -233,7 +256,15 @@ ActivityHistory.prototype.init = function ( opts ) {
     if ( !isValidTime( opts.startMillis ) )
         throw new Error();
     this.syncOnAdd_ = opts.syncOnAdd;
+    if ( this.syncOnAdd_ === void 0 )
+        this.syncOnAdd_ = function () {
+            // Do nothing.
+        };
     this.syncOnForget_ = opts.syncOnForget;
+    if ( this.syncOnForget_ === void 0 )
+        this.syncOnForget_ = function () {
+            // Do nothing.
+        };
     // NOTE: We always leave at least one entry in the history so that
     // it remains impossible to add entries that overwrite previous
     // results. This is the only reason we introduce a zero-length
@@ -271,6 +302,11 @@ ActivityHistory.prototype.getAllEntries = function () {
     // our painstakingly made listener-and-getter interface. How dare
     // they enjoy that kind of freedom! Let them eat copies.
     return this.entries_.slice();
+};
+ActivityHistory.prototype.getFirstEntry = function () {
+    // NOTE: This is a convenience method for getAllEntries, but it
+    // also avoids copying the Array.
+    return this.entries_[ 0 ];
 };
 ActivityHistory.prototype.isEmpty = function () {
     // NOTE: This is a convenience method for getAllEntries, but it
@@ -420,11 +456,6 @@ function visualizeHistoriesOnCanvas( histories, opt_opts ) {
             ents.getAllEntries() : ents;
     } );
     
-    function arrMin( arr, func ) {
-        return _.arrFoldl( 1 / 0, arr, function ( min, item ) {
-            return Math.min( min, func( item ) );
-        } );
-    }
     function paddedEntEnd( entry ) {
         return entry.maybeEndMillis === null ?
             entry.startMillis + opts.infinityPadMillis :
@@ -549,13 +580,7 @@ MessageMembrane.prototype.init = function (
                 },
                 makeVal: function ( inputData, startMillis ) {
                     return new ActivityHistory().init( {
-                        startMillis: startMillis,
-                        syncOnAdd: function () {
-                            // Do nothing.
-                        },
-                        syncOnForget: function () {
-                            // Do nothing.
-                        }
+                        startMillis: startMillis
                     } );
                 }
             } );
@@ -593,9 +618,6 @@ MessageMembrane.prototype.init = function (
                         syncOnAdd: function () {
                             onAddInResponse(
                                 delayMillis, inputData, history );
-                        },
-                        syncOnForget: function () {
-                            // Do nothing.
                         }
                     } );
                 }
@@ -792,13 +814,7 @@ MessageMembrane.prototype.receiveMessage = function ( message ) {
     
     _.arrEach( message.demands, function ( demand ) {
         var history = new ActivityHistory().init( {
-            startMillis: oldInPermanentUntilMillis,
-            syncOnAdd: function () {
-                // Do nothing.
-            },
-            syncOnForget: function () {
-                // Do nothing.
-            }
+            startMillis: oldInPermanentUntilMillis
         } );
         _.arrEach( demand.demandDataHistory, function ( entry ) {
             history.addEntry( entry );
@@ -979,9 +995,6 @@ MessageMembrane.prototype.getNewOutDemander = function (
         startMillis: actualOutPermanentUntilMillis,
         syncOnAdd: function () {
             self.triggerSendMessage_();
-        },
-        syncOnForget: function () {
-            // Do nothing.
         }
     } );
     var responseHistory = new ActivityHistory().init( {
@@ -1167,9 +1180,6 @@ function makeLinkedSigPair( startMillis ) {
             _.arrEach( listeners, function ( listener ) {
                 listener();
             } );
-        },
-        syncOnForget: function () {
-            // Do nothing.
         }
     } );
     
@@ -1515,13 +1525,7 @@ function makeTestForDemandOverLinkedPair() {
         mousePosition = JSON.stringify( [ e.clientX, e.clientY ] );
     } } );
     var mouseHistory = new ActivityHistory().init( {
-        startMillis: now,
-        syncOnAdd: function () {
-            // Do nothing.
-        },
-        syncOnForget: function () {
-            // Do nothing.
-        }
+        startMillis: now
     } );
     
     var pair = makeLinkedMembranePair( now, deferForBatching );
@@ -1605,13 +1609,7 @@ function makeTestForResponseOverLinkedPair() {
     var pairDelayMillis = 2000;
     var measurementDelayMillis = pairDelayMillis / 2;
     var mouseHistory = new ActivityHistory().init( {
-        startMillis: now,
-        syncOnAdd: function () {
-            // Do nothing.
-        },
-        syncOnForget: function () {
-            // Do nothing.
-        }
+        startMillis: now
     } );
     
     var pair = makeLinkedMembranePair( now, deferForBatching );
