@@ -29,45 +29,6 @@
 // OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-// NOTE: The typeAnytimeFn() type is an RDP behavior, and it may
-// perform RDP side effects, but it's also special because it must
-// have an activity profile at every (partition, time offset)
-// coordinate within its input type, so that it can split those inputs
-// when a behMerge step happens. Even without any side effects,
-// observe that the following progression of types cannot correspond
-// to a valid program:
-//
-// (1 + 1) * x
-// ((x -> x) + (x -> x)) * x  -- introduce tautologies
-// (x -> x) * x  -- behMerge
-// x  -- behCall
-//
-// In particular, we cannot introduce those tautologies. The type we
-// introduced them from (namely, 1) doesn't provide a tangible enough
-// activity profile to determine which of these two (x -> x) behaviors
-// is being called at any given time.
-//
-// Although this description emphasizes the input type, there is no
-// asymmetry. If we were to generalize signals to be bidirectional
-// (i.e. so that we augment this type theory with linear-logic-like
-// duals of * and +), the typeAnytimeFn() type would need to carry
-// enough activity profile information to address every
-// (partition, time offset) coordinate arriving along either the input
-// or the output. This is because every signal going upstream needs to
-// be split apart to pass the behMerge step.
-//
-// Perhaps we could make other compromises here: If we allow signals
-// to carry activity profiles that are not visible in their type
-// signatures, then we likely have this information somewhere inside
-// the (1 + 1) type... but then we probably lose the ability to
-// encapsulate parts of a distributed behavior so other partitions
-// can't see their internal structure. If we annotate the (x -> x)
-// type with extra information that completely identifies its
-// implementation, then the behMerge step will only be properly typed
-// if it introduces no ambiguity. Fortunately, even if these other
-// directions are valuable, it's likely they can be developed
-// alongside typeAnytimeFn().
-
 // NOTE: The leafInfo parameters aren't actually part of the types for
 // equality purposes, but we use them to annotate the type tree with
 // metadata.
@@ -323,25 +284,10 @@ function makeOffsetMillisMap() {
 }
 
 function makeAnytimeFnInstallationPair( startMillis, type ) {
-    
-    var writableActivitySigs = makeOffsetMillisMap();
-    var readableActivitySigs = makeOffsetMillisMap();
-    
-    _.arrEach( getAllCoordinates( type ), function ( coordinates ) {
-        if ( writableActivitySigs.has( coordinates.offsetMillis ) )
-            return;
-        var pair = makeLinkedSigPair();
-        writableActivitySigs.set(
-            coordinates.offsetMillis, pair.writable );
-        readableActivitySigs.set(
-            coordinates.offsetMillis, pair.readable );
-    } );
-    
     var doStaticInvoke = null;
     var connectionDependencies = [];
     
     var writable = {};
-    writable.activitySigs = writableActivitySigs;
     writable.addConnectionDependency = function ( dependency ) {
         connectionDependencies.push( dependency );
     };
@@ -354,17 +300,6 @@ function makeAnytimeFnInstallationPair( startMillis, type ) {
         // NOTE: This is just a convenience method.
         
         writable.addConnectionDependency( readable );
-        
-        readable.activitySigs.each(
-            function ( offsetMillis, inActivitySig ) {
-            
-            var outActivitySig =
-                writable.activitySigs.get( offsetMillis );
-            inActivitySig.readEachEntry( function ( entry ) {
-                outActivitySig.history.addEntry( entry );
-            } );
-        } );
-        
         writable.onStaticInvoke(
             function ( context, delayMillis, inSigs, outSigs ) {
             
@@ -374,7 +309,6 @@ function makeAnytimeFnInstallationPair( startMillis, type ) {
     };
     
     var readable = {};
-    readable.activitySigs = readableActivitySigs;
     readable.isConnected = function () {
         return doStaticInvoke !== null &&
             _.arrAll( connectionDependencies, function ( dep ) {
@@ -764,79 +698,301 @@ function behAssocrs( pitcherType, ballType, catcherType ) {
     };
     return result;
 }
+
+// NOTE: Observe that the following progression of types cannot
+// correspond to a valid program:
+//
+// (1 + 1) * x
+// ((x -> x) + (x -> x)) * x  -- introduce tautologies
+// (x -> x) * x  -- behMerge
+// x  -- behCall
+//
+// The problem is that we can't determine which (x -> x) is called at
+// any given time offset, because that information (1 + 1) is not
+// observable in the partitions that are passing in x (or to any other
+// partition, for that matter).
+//
+// To overcome this, we have an extra requirement when doing a
+// behMerge: The signals being merged must be active in enough
+// (partition, time offset) coordinates to act as a filter for any
+// inputs. For instance, we can't merge two (x -> x) signals, but we
+// can merge two (x * (x -> x)) signals. Because of this, developers
+// may find it easiest to deal with first-class behaviors if they
+// bundle them up in the form (activity * (x -> y)).
+//
+// Notice that we need to filter the input type, but there's no
+// corresponding requirement for the output type. If we were to
+// generalize signals to be bidirectional (i.e. so that some atomic
+// signals go backwards in time and we have linear-logic-like duals of
+// * and +), then we would indeed treat the input and output signal
+// symmetrically. We would then filter every input or output signal
+// going backwards in time--but not the ones going forwards in time.
+//
+// (TODO: Both the inputs and the outputs are under an exponential in
+// linear logic terms, since (x -> y) can be invoked any number of
+// times. Figure out whether we'd also need to prohibit merges like
+// (-x * -x), where the backwards-going signals are not under an
+// exponential.)
+//
 function behMerge( type ) {
+    var informantsAvailable = makeOffsetMap();
+    var informantsNeeded = makeOffsetMap();
+    eachTypeLeafNodeOver( type, function ( type, unused ) {
+        if ( type.op === "atom" ) {
+            informantsAvailable.set( type.offsetMillis, true );
+        } else if ( type.op === "anytimeFn" ) {
+            eachTypeLeafNodeOver( type.demand,
+                function ( type, unused ) {
+                
+                if ( type.op === "atom" ) {
+                    informantsNeeded.set( type.offsetMillis, true );
+                } else if ( type.op === "anytimeFn" ) {
+                    // Do nothing.
+                } else {
+                    throw new Error();
+                }
+            } );
+        } else {
+            throw new Error();
+        }
+    } );
+    if ( informantsNeeded.any( function ( offsetMillis, unused ) {
+        return !informantsAvailable.has( offsetMillis );
+    } ) )
+        throw new Error();
+    
     var result = {};
     result.inType = typePlus( type, type );
     result.outType = type;
     result.install = function ( context, inSigs, outSigs ) {
-        eachTypeLeafNodeOver( inSigs.left, inSigs.right, outSigs,
-            function ( type, inSigLeft, inSigRight, outSig ) {
+        var activitySigsType = typeOne();
+        var leftActivitySigs = typeOne();
+        var rightActivitySigs = typeOne();
+        var informantGroups = informantsNeeded.map(
+            function ( unused, offsetMillis ) {
+            
+            activitySigsType = typeTimes(
+                typeAtom( offsetMillis, null ), activitySigsType );
+            var leftPair = makeLinkedSigPair();
+            leftActivitySigs = typeTimes(
+                typeAtom( offsetMillis, leftPair.readable ),
+                leftActivitySigs );
+            var rightPair = makeLinkedSigPair();
+            rightActivitySigs = typeTimes(
+                typeAtom( offsetMillis, rightPair.readable ),
+                rightActivitySigs );
+            var activityWritables = {};
+            activityWritable[ "left" ] = leftPair.writable;
+            activityWritable[ "right" ] = rightPair.writable;
+            return {
+                activityWritables: activityWritables,
+                pending: []
+            };
+        } );
+        function addInformantPair( offsetMillis ) {
+            if ( !informantGroups.has( offsetMillis ) )
+                return false;
+            var result = {};
+            _.arrEach( [ "left", "right" ], function ( condition ) {
+                informantGroups.get( offsetMillis ).pending.push( {
+                    condition: condition,
+                    history: result[ condition ] =
+                        new ActivityHistory().init( {
+                            startMillis: context.startMillis
+                        } )
+                } );
+            } );
+            return result;
+        }
+        function dupActivitySigs() {
+            function dup( activitySigs ) {
+                var dupFirst = makePairsForType(
+                    context.startMillis, activitySigs );
+                var dupSecond = makePairsForType(
+                    context.startMillis, activitySigs );
+                behDup( activitySigsType ).install(
+                    context, activitySigs,
+                    typeTimes(
+                        dupFirst.writables, dupSecond.writables ) );
+                return { first: dupFirst.readables,
+                    second: dupSecond.readables };
+            }
+            splittingActivitySigs = true;
+            var leftDup = dup( leftActivitySigs );
+            var rightDup = dup( rightActivitySigs );
+            leftActivitySigs = leftDup.second;
+            rightActivitySigs = rightDup.second;
+            return typePlus( leftDup.first, rightDup.first );
+        }
+        
+        function otherCond( condition ) {
+            return condition === "left" ? "right" : "left";
+        }
+        
+        function processInformantsPending( offsetMillis ) {
+            var informantGroup = informantGroups.get( offsetMillis );
+            var informants = informantGroup.pending;
+            do {
+                var didSomething = false;
+                
+                var addConditionEntry = function ( entry ) {
+                    didSomething = true;
+                    var endMillis = entEnd( entry );
+                    _.arrEach( informants, function ( informant ) {
+                        informant.forgetBeforeMillis( endMillis );
+                    } );
+                    _.arrEach( [ "left", "right" ],
+                        function ( condition ) {
+                        
+                        informantGroup.activityWritables[ condition
+                            ].history.addEntry( {
+                                maybeData:
+                                    entry.maybeData === null ? null :
+                                    entry.maybeData.val ===
+                                        condition ?
+                                        { val: [] } : null,
+                                startMillis: entry.startMillis,
+                                maybeEndMillis: entry.maybeEndMillis
+                            } );
+                    } );
+                };
+                
+                _.arrEach( [ "left", "right" ],
+                    function ( condition ) {
+                    
+                    var startMillis = bin.informants[ 0
+                        ].history.getFirstEntry().startMillis;
+                    
+                    var anyAffirmative = arrMax( bin.informants,
+                        function ( it ) {
+                        
+                        if ( it.condition !== condition )
+                            return -1 / 0;
+                        if ( it.history.isEmpty() )
+                            return -1 / 0;
+                        var entry = it.history.getFirstEntry();
+                        if ( entry.maybeData === null )
+                            return -1 / 0;
+                        return entEnd( entry );
+                    } );
+                    if ( anyAffirmative !== -1 / 0 )
+                        addConditionEntry( {
+                            maybeData: { val: condition },
+                            startMillis: startMillis,
+                            maybeEndMillis:
+                                { val: anyAffirmative }
+                        } );
+                    
+                    var bothInactive = arrMin( bin.informants,
+                        function ( it ) {
+                        
+                        if ( it.history.isEmpty() )
+                            return -1 / 0;
+                        var entry = it.history.getFirstEntry();
+                        if ( entry.maybeData !== null )
+                            return -1 / 0;
+                        return entEnd( entry );
+                    } );
+                    if ( bothInactive !== -1 / 0 )
+                        addConditionEntry( {
+                            maybeData: null,
+                            startMillis: startMillis,
+                            maybeEndMillis:
+                                bothInactive === 1 / 0 ? null :
+                                    { val: bothInactive }
+                        } );
+                    
+                    var allNegatory = arrMin( bin.informants,
+                        function ( it ) {
+                        
+                        if ( it.condition === condition )
+                            return 1 / 0;
+                        if ( it.history.isEmpty() )
+                            return -1 / 0;
+                        var entry = it.history.getFirstEntry();
+                        if ( entry.maybeData !== null )
+                            return -1 / 0;
+                        return entEnd( entry );
+                    } );
+                    if ( allNegatory !== -1 / 0 )
+                        addConditionEntry( {
+                            maybeData: { val: condition },
+                            startMillis: startMillis,
+                            maybeEndMillis:
+                                allNegatory === 1 / 0 ? null :
+                                    { val: allNegatory }
+                        } );
+                } );
+            } while ( didSomething );
+        }
+        
+        eachTypeLeafNodeOver(
+            type, inSigs.left, inSigs.right, outSigs,
+            function ( type, unused, inSigLeft, inSigRight, outSig ) {
             
             if ( type.op === "atom" ) {
+                var informantPair =
+                    addInformantPair( type.offsetMillis );
                 var leftPending = [];
                 var rightPending = [];
+                var processMergePending = function () {
+                    // TODO: Let this go forward when only one future
+                    // is available, as long as that future has
+                    // activity.
+                    consumeEarliestEntries(
+                        [ leftPending, rightPending ],
+                        function ( earliestEntries ) {
+                        
+                        var leftEntry = earliestEntries[ 0 ];
+                        var rightEntry = earliestEntries[ 1 ];
+                        
+                        // NOTE: This is a sanity check to make sure
+                        // the inputs are as disjoint as the type
+                        // system indicates they are.
+                        if ( leftEntry.maybeData !== null &&
+                            rightEntry.maybeData !== null )
+                            throw new Error();
+                        
+                        function makeEntry( maybeData ) {
+                            return {
+                                maybeData: maybeData,
+                                startMillis: leftEntry.startMillis,
+                                maybeEndMillis:
+                                    leftEntry.maybeEndMillis
+                            };
+                        }
+                        
+                        outSig.history.addEntry( makeEntry(
+                            leftEntry.maybeData !== null ?
+                                leftEntry.maybeData :
+                                rightEntry.maybeData
+                        ) );
+                        if ( !!informantPair ) {
+                            var conds = leftEntry.maybeData !== null ?
+                                { yes: "left", no: "right" } :
+                                { yes: "right", no: "left" };
+                            informantPair[ conds.yes ].addEntry(
+                                makeEntry( { val: [] } ) );
+                            informantPair[ conds.no ].addEntry(
+                                makeEntry( null ) );
+                        }
+                    } );
+                    if ( !!informantPair )
+                        processInformantsPending( type.offsetMillis );
+                };
                 inSigLeft.readEachEntry( function ( entry ) {
                     leftPending.push( entry );
-                    processPending();
+                    processMergePending();
                 } );
                 inSigRight.readEachEntry( function ( entry ) {
                     rightPending.push( entry );
-                    processPending();
+                    processMergePending();
                 } );
             } else if ( type.op === "anytimeFn" ) {
-                
-                var invocations = [];
-                
                 outSig.addConnectionDependency( inSigLeft );
                 outSig.addConnectionDependency( inSigRight );
-                outSig.activitySigs.each(
-                    function ( offsetMillis, outActivitySig ) {
-                    
-                    var splitLeft =
-                        makeLinkedSigPair( context.startMillis );
-                    inSigLeft.get( offsetMillis ).readEachEntry(
-                        function ( entry ) {
-                        
-                        splitLeft.writable.history.addEntry( entry );
-                        _.arrEach( invocations,
-                            function ( invocation ) {
-                            
-                            invocation.leftActivity.history.addEntry(
-                                entry );
-                        } );
-                    } );
-                    var splitRight =
-                        makeLinkedSigPair( context.startMillis );
-                    inSigRight.get( offsetMillis ).readEachEntry(
-                        function ( entry ) {
-                        
-                        splitRight.writable.history.addEntry( entry );
-                        _.arrEach( invocations,
-                            function ( invocation ) {
-                            
-                            invocation.rightActivity.history.addEntry(
-                                entry );
-                        } );
-                    } );
-                    behMerge( typeAtom( 0, null ) ).install( context,
-                        typePlus(
-                            typeAtom( 0, splitLeft.readable ),
-                            typeAtom( 0, splitRight.readable )
-                        ),
-                        typeAtom( 0, outActivitySig )
-                    );
-                } );
                 outSig.onStaticInvoke( function (
                     context, delayMillis, inSigs, outSigs ) {
-                    
-                    var leftActivityPair =
-                        makeLinkedSigPair( context.startMillis );
-                    var rightActivityPair =
-                        makeLinkedSigPair( context.startMillis );
-                    invocations.push( {
-                        leftActivty: leftActivityPair.writable,
-                        rightActivity: rightActivityPair.writable
-                    } );
                     
                     var inSigLeftPairs = makePairsForType(
                         context.startMillis, type.demand );
@@ -847,18 +1003,14 @@ function behMerge( type ) {
                     var outSigRightPairs = makePairsForType(
                         context.startMillis, type.response );
                     
-                    var atom = typeAtom( 0, null );
-                    
                     // Split the inputs.
+                    var aSigs = activitySigsType;
                     behSeqs(
-                        behDisjoin( type.demand, atom, atom ),
-                        behEither( behFst( type.demand, atom ),
-                            behFst( type.demand, atom ) )
+                        behDisjoin( type.demand, aSigs, aSigs ),
+                        behEither( behFst( type.demand, aSigs ),
+                            behFst( type.demand, aSigs ) )
                     ).install( context,
-                        typeTimes( inSigs, typePlus(
-                            typeAtom( 0, leftActivityPair.readable ),
-                            typeAtom( 0, rightActivityPair.readable )
-                        ) ),
+                        typeTimes( inSigs, dupActivitySigs() ),
                         typePlus(
                             inSigLeftPairs.writable,
                             inSigRightPairs.writable )
@@ -881,35 +1033,11 @@ function behMerge( type ) {
             } else {
                 throw new Error();
             }
-            
-            function processPending() {
-                consumeEarliestEntries(
-                    [ leftPending, rightPending ],
-                    function ( earliestEntries ) {
-                    
-                    var leftEntry = earliestEntries[ 0 ];
-                    var rightEntry = earliestEntries[ 1 ];
-                    
-                    // NOTE: This is a sanity check to make sure the
-                    // inputs are as disjoint as the type system
-                    // indicates they are.
-                    if ( leftEntry.maybeData !== null &&
-                        rightEntry.maybeData !== null )
-                        throw new Error();
-                    
-                    outSig.history.addEntry( {
-                        maybeData: leftEntry.maybeData !== null ?
-                            leftEntry.maybeData :
-                            rightEntry.maybeData,
-                        startMillis: leftEntry.startMillis,
-                        maybeEndMillis: leftEntry.maybeEndMillis
-                    } );
-                } );
-            }
         } );
     };
     return result;
 }
+
 // TODO: See what this would be called in Sirea.
 function behVacuous( type ) {
     var result = {};
@@ -927,11 +1055,6 @@ function behVacuous( type ) {
                         return !!"wasAbleToFinish";
                     } );
                 } else if ( type.op === "anytimeFn" ) {
-                    outSig.activitySigs.each(
-                        function ( offsetMillis, activitySig ) {
-                        
-                        ignoreOutSigs( typeAtom( 0, activitySig ) );
-                    } );
                     outSig.onStaticInvoke( function (
                         context, delayMillis, inSigs, outSigs ) {
                         
@@ -1114,53 +1237,40 @@ function behDisjoin( branchType, leftType, rightType ) {
         function eachOnOneSide(
             condition, oppositeCondition, type, inSigs, outSigs ) {
             
-            siphonSigs( inSigs, outSigs );
-            function siphonSigs( inSigs, outSigs ) {
-                eachTypeLeafNodeOver( inSigs, outSigs,
-                    function ( type, inSig, outSig ) {
-                    
-                    if ( type.op === "atom" ) {
-                        var bin = getBin( type.offsetMillis );
-                        var informantHistory =
-                            new ActivityHistory().init( {
-                                startMillis: context.startMillis
-                            } );
-                        if ( !!bin )
-                            informants.push( {
-                                condition: condition,
-                                history: informantHistory
-                            } );
-                        inSig.readEachEntry( function ( entry ) {
-                            outSig.history.addEntry( entry );
-                            if ( !!bin ) {
-                                informantHistory.addEntry(
-                                    censorEntry( entry ) );
-                                processPending();
-                            }
+            eachTypeLeafNodeOver( inSigs, outSigs,
+                function ( type, inSig, outSig ) {
+                
+                if ( type.op === "atom" ) {
+                    var bin = getBin( type.offsetMillis );
+                    var informantHistory =
+                        new ActivityHistory().init( {
+                            startMillis: context.startMillis
                         } );
-                    } else if ( type.op === "anytimeFn" ) {
+                    if ( !!bin )
+                        informants.push( {
+                            condition: condition,
+                            history: informantHistory
+                        } );
+                    inSig.readEachEntry( function ( entry ) {
+                        outSig.history.addEntry( entry );
+                        if ( !!bin ) {
+                            informantHistory.addEntry(
+                                censorEntry( entry ) );
+                            processPending();
+                        }
+                    } );
+                } else if ( type.op === "anytimeFn" ) {
+                    outSig.addConnectionDependency( inSig );
+                    outSig.onStaticInvoke( function (
+                        context, delayMillis, inSigs, outSigs ) {
                         
-                        outSig.addConnectionDependency( inSig );
-                        inSig.activitySigs.each(
-                            function ( offsetMillis, inActivitySig ) {
-                            
-                            siphonSigs(
-                                typeAtom( 0, inActivitySig ),
-                                typeAtom( 0,
-                                    outSigs.activitySigs.get(
-                                        offsetMillis ) ) );
-                        } );
-                        outSig.onStaticInvoke( function (
-                            context, delayMillis, inSigs, outSigs ) {
-                            
-                            inSig.doStaticInvoke( context,
-                                delayMillis, inSigs, outSigs );
-                        } );
-                    } else {
-                        throw new Error();
-                    }
-                } );
-            }
+                        inSig.doStaticInvoke(
+                            context, delayMillis, inSigs, outSigs );
+                    } );
+                } else {
+                    throw new Error();
+                }
+            } );
         }
         eachOnOneSide( "left", "notLeft", leftType,
             inSigs.second.left, outSigs.left.second );
@@ -1329,12 +1439,6 @@ function delayAddEntry( outSig, delayMillis, entry ) {
     } );
 }
 
-function delayAddAtomSig( outSig, delayMillis, inSig ) {
-    inSig.readEachEntry( function ( entry ) {
-        delayAddEntry( outSig, delayMillis, entry );
-    } );
-}
-
 // TODO: See what this would be called in Sirea, if anything.
 function behClosure( beh ) {
     var inputPairType = beh.inType;
@@ -1343,36 +1447,15 @@ function behClosure( beh ) {
     var encapsulatedType = beh.inType.first;
     var paramType = beh.inType.second;
     
-    if ( !typesSupplyActivityEvidence(
-        [ encapsulatedType ], paramType ) )
-        throw new Error();
-    
-    var closedType = typeAnytimeFn( paramType, beh.outType, null );
-    
     var result = {};
     result.inType = encapsulatedType;
-    result.outType = closedType;
+    result.outType = typeAnytimeFn( paramType, beh.outType, null );
     result.install = function (
         context, inSigsEncapsulated, outSigsFunc ) {
         
         var outSigFunc = outSigsFunc.pairInfo;
         
         var invocations = [];
-        var informants = outSigFunc.activitySigs.map(
-            function ( outActivitySig, offsetMillis ) {
-            
-            return [];
-        } );
-        
-        function makeInformant( offsetMillis ) {
-            if ( !informants.has( offsetMillis ) )
-                return false;
-            var result = new ActivityHistory().init( {
-                startMillis: context.startMillis
-            } );
-            informants.get( offsetMillis ).push( result );
-            return result;
-        }
         
         eachTypeLeafNodeZipper( inSigsEncapsulated, _.idfn,
             function ( get ) {
@@ -1381,11 +1464,7 @@ function behClosure( beh ) {
             var inSig = type.leafInfo;
             
             if ( type.op === "atom" ) {
-                var informant = makeInformant( type.offsetMillis );
                 inSig.readEachEntry( function ( entry ) {
-                    if ( !!informant )
-                        informant.addEntry( censorEntry( entry ) );
-                    processInformants( type.offsetMillis );
                     _.arrEach( invocations, function ( invocation ) {
                         var writable = get( invocation.writables );
                         delayAddEntry(
@@ -1393,78 +1472,15 @@ function behClosure( beh ) {
                     } );
                 } );
             } else if ( type.op === "anytimeFn" ) {
+                // Do nothing.
+                
                 // NOTE: We already use addConnectionDependency and
                 // onStaticInvoke elsewhere.
-                inSig.activitySigs.each(
-                    function ( offsetMillis, activitySig ) {
-                    
-                    var informant = makeInformant( offsetMillis );
-                    activitySig.readEachEntry( function ( entry ) {
-                        if ( !!informant )
-                            informant.addEntry( entry );
-                        processInformants( offsetMillis );
-                    } );
-                } );
+                
             } else {
                 throw new Error();
             }
         } );
-        
-        function processInformants( offsetMillis ) {
-            var outActivitySig =
-                outSigFunc.activitySig.get( offsetMillis );
-            var informants = informants.get( offsetMillis );
-            do {
-                var didSomething = false;
-                
-                var addActivityEntry = function ( entry ) {
-                    didSomething = true;
-                    var endMillis = entEnd( entry );
-                    _.arrEach( informants, function ( informant ) {
-                        informant.forgetBeforeMillis( endMillis );
-                    } );
-                    outActivitySig.history.addEntry( entry );
-                };
-                
-                var startMillis = informants[ 0
-                    ].history.getFirstEntry().startMillis;
-                
-                var anyAffirmative = arrMax( informants,
-                    function ( it ) {
-                    
-                    if ( it.isEmpty() )
-                        return -1 / 0;
-                    var entry = it.getFirstEntry();
-                    if ( entry.maybeData === null )
-                        return -1 / 0;
-                    return entEnd( entry );
-                } );
-                if ( anyAffirmative !== -1 / 0 )
-                    addActivityEntry( {
-                        maybeData: { val: condition },
-                        startMillis: startMillis,
-                        maybeEndMillis: { val: anyAffirmative }
-                    } );
-                
-                var allInactive = arrMin( informants,
-                    function ( it ) {
-                    
-                    if ( it.history.isEmpty() )
-                        return -1 / 0;
-                    var entry = it.history.getFirstEntry();
-                    if ( entry.maybeData !== null )
-                        return -1 / 0;
-                    return entEnd( entry );
-                } );
-                if ( allInactive !== -1 / 0 )
-                    addConditionEntry( {
-                        maybeData: null,
-                        startMillis: startMillis,
-                        maybeEndMillis: allInactive === 1 / 0 ? null :
-                            { val: allInactive }
-                    } );
-            } while ( didSomething );
-        }
         
         outSigFunc.onStaticInvoke( function (
             context, delayMillis, inSigsParam, outSigsResult ) {
@@ -1483,8 +1499,6 @@ function behClosure( beh ) {
                     // delayAddEntry elsewhere.
                     
                 } else if ( type.op === "anytimeFn" ) {
-                    // NOTE: We already process the activitySigs
-                    // elsewhere.
                     outSig.addConnectionDependency( inSig );
                     outSig.onStaticInvoke( function (
                         context, totalDelayMillis, inSigs, outSigs ) {
@@ -1504,8 +1518,8 @@ function behClosure( beh ) {
             } );
             
             beh.install( context,
-                typeTimes( delayedEncapsulatedPairs.readables,
-                    inSigsParam ),
+                typeTimes(
+                    delayedEncapsulatedPairs.readables, inSigsParam ),
                 outSigsResult );
         } );
     };
@@ -1554,17 +1568,11 @@ function behDelay( delayMillis, type ) {
             function ( type, inSig, outSig ) {
             
             if ( type.op === "atom" ) {
-                delayAddAtomSig( outSig, delayMillis, inSig );
+                inSig.readEachEntry( function ( entry ) {
+                    delayAddEntry( outSig, delayMillis, entry );
+                } );
             } else if ( type.op === "anytimeFn" ) {
                 outSig.addConnectionDependency( inSig );
-                inSigs.activitySigs.each(
-                    function ( offsetMillis, inActivitySig ) {
-                    
-                    var outActivitySig =
-                        outSig.activitySigs.get( offsetMillis );
-                    delayAddAtomSig(
-                        outActivitySig, delayMillis, inActivitySig );
-                } );
                 outSig.onStaticInvoke( function (
                     context, totalDelayMillis, inSigs, outSigs ) {
                     
