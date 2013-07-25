@@ -214,7 +214,12 @@ function makeTestForResponseOverLinkedPair() {
     return result;
 }
 
-function convenientlyInstallBehavior( delayMillis, beh ) {
+function convenientlyInstallBehavior( beh ) {
+    if ( !(beh.inType.op === "atom" && beh.outType.op === "atom") )
+        throw new Error();
+    var delayMillis =
+        beh.outType.offsetMillis - beh.inType.offsetMillis;
+    
     var nowMillis = new Date().getTime();
     function deferForBatching( func ) {
         setTimeout( function () {
@@ -273,7 +278,7 @@ function makeTestForBehaviors() {
     
     var dom = null;
     
-    convenientlyInstallBehavior( mouseDelayMillis, behSeqs(
+    convenientlyInstallBehavior( behSeqs(
         behDelay( measurementDelayMillis, typeAtom( 0, null ) ),
         behMouseQuery(),
         behDelay( mouseDelayMillis - measurementDelayMillis,
