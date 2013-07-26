@@ -214,11 +214,16 @@ function makeTestForResponseOverLinkedPair() {
     return result;
 }
 
-function convenientlyInstallBehavior( beh ) {
-    if ( !(beh.inType.op === "atom" && beh.outType.op === "atom") )
+function convenientlyInstallBehaviorWithCaps( caps, var_args ) {
+    var beh = behSeqsArr( _.arrCut( arguments, 1 ) );
+    if ( !(beh.inType.op === "times"
+        && beh.inType.second.op === "atom"
+        && beh.outType.op === "atom") )
+        throw new Error();
+    if ( typesUnify( caps, beh.inType.first ) === null )
         throw new Error();
     var delayMillis =
-        beh.outType.offsetMillis - beh.inType.offsetMillis;
+        beh.outType.offsetMillis - beh.inType.second.offsetMillis;
     
     var nowMillis = new Date().getTime();
     function deferForBatching( func ) {
@@ -243,8 +248,10 @@ function convenientlyInstallBehavior( beh ) {
             membrane: membranePair.b.membrane,
             onBegin: onBeginObj.onBegin
         },
-        typeAtom( 0, step1.readable ),
-        typeAtom( delayMillis, step2.writable )
+        typeTimes( caps,
+            typeAtom(
+                beh.inType.second.offsetMillis, step1.readable ) ),
+        typeAtom( beh.outType.offsetMillis, step2.writable )
     );
     onBeginObj.begin();
     step2.readable.readEachEntry( function ( entry ) {
@@ -268,6 +275,13 @@ function convenientlyInstallBehavior( beh ) {
     }, intervalMillis );
 }
 
+function convenientlyInstallBehavior( var_args ) {
+    convenientlyInstallBehaviorWithCaps( typeOne(),
+        behSnd( typeOne(), typeAtom( 0, null ) ),
+        behSeqsArr( arguments )
+    );
+}
+
 function makeTestForBehaviors() {
     // NOTE: Although we delay the mouse-measurement demand by two
     // seconds, we demand the measurement at the midpoint between our
@@ -278,7 +292,7 @@ function makeTestForBehaviors() {
     
     var dom = null;
     
-    convenientlyInstallBehavior( behSeqs(
+    convenientlyInstallBehavior(
         behDelay( measurementDelayMillis, typeAtom( 0, null ) ),
         behMouseQuery(),
         behDelay( mouseDelayMillis - measurementDelayMillis,
@@ -286,7 +300,88 @@ function makeTestForBehaviors() {
         behDomDiagnostic( function ( linkMetadata ) {
             dom = linkMetadata.dom;
         } )
-    ) );
+    );
+    
+    return { dom: dom };
+}
+
+function makeTestForBehCall() {
+    // NOTE: Although we delay the mouse-measurement demand by two
+    // seconds, we demand the measurement at the midpoint between our
+    // demand and the response, so we actually observe a delay of only
+    // half that interval.
+    var mouseDelayMillis = 2000;
+    var measurementDelayMillis = mouseDelayMillis / 2;
+    
+    var dom = null;
+    
+    // TODO: If we make behToCap a general-use utility, see if it
+    // should have a time offset parameter. Currently it just relies
+    // on whatever time offsets exist in the behavior's own inType and
+    // outType.
+    function behToCap( beh ) {
+        var result = {};
+        result.impl = typeAnytimeFn( beh.inType, beh.outType, {
+            isConnected: function () {
+                return true;
+            },
+            doStaticInvoke: function (
+                context, delayMillis, inSigs, outSigs ) {
+                
+                beh.install( context, inSigs, outSigs );
+            }
+        } );
+        result.type = typeAnytimeFn( beh.inType, beh.outType, null );
+        return result;
+    }
+    
+    var mouseCap = behToCap( behMouseQuery() );
+    var domCap = behToCap( behDomDiagnostic(
+        function ( linkMetadata ) {
+        
+        // TODO: This is awkward. If this capability is called twice,
+        // we'll end up with only one of the DOM elements. Should this
+        // use linear types?
+        dom = linkMetadata.dom;
+    } ) );
+    var capsType = typeTimes( mouseCap.type, domCap.type );
+    
+    function d1( type ) {
+        return typePlusOffsetMillis( measurementDelayMillis, type );
+    }
+    function d2( type ) {
+        return typePlusOffsetMillis( mouseDelayMillis, type );
+    }
+    
+    var atom = typeAtom( 0, null );
+    
+    convenientlyInstallBehaviorWithCaps(
+        typeTimes( mouseCap.impl, domCap.impl ),
+        
+        // Delay to measurementDelayMillis, then call mouseCap.
+        behFirst( behDup( capsType ), atom ),
+        behAssocrp( capsType, capsType, atom ),
+        behSecond( capsType,
+            behFirst( behFst( mouseCap.type, domCap.type ), atom ) ),
+        behDelay( measurementDelayMillis,
+            typeTimes( capsType, typeTimes( mouseCap.type, atom ) ) ),
+        behSecond( d1( capsType ), behCall( d1( mouseCap.type ) ) ),
+        
+        // Delay to mouseDelayMillis, then call domCap.
+        behFirst( behDup( d1( capsType ) ), d1( atom ) ),
+        behAssocrp( d1( capsType ), d1( capsType ), d1( atom ) ),
+        behSecond( d1( capsType ),
+            behFirst(
+                behSnd( d1( mouseCap.type ), d1( domCap.type ) ),
+                d1( atom ) ) ),
+        behDelay( mouseDelayMillis - measurementDelayMillis,
+            d1( typeTimes( capsType,
+                typeTimes( domCap.type, atom ) ) ) ),
+        behSecond( d2( capsType ), behCall( d2( domCap.type ) ) ),
+        
+        // Drop the capabilities.
+        behSnd( d2( capsType ), d2( atom ) )
+    );
     
     return { dom: dom };
 }

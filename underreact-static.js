@@ -104,7 +104,7 @@ function typesUnify( a, b ) {
             return null;
         if ( op === "atom" ) {
             var thisOffsetMillis =
-                types.b.offsetMillis - types.a.offsetMillis;
+                types.a.offsetMillis - types.b.offsetMillis;
             if ( offsetMillis === null )
                 offsetMillis = thisOffsetMillis;
             else if ( offsetMillis !== thisOffsetMillis )
@@ -241,7 +241,7 @@ function eachTypeLeafNodeOver( var_args, body ) {
     } );
 }
 
-function typePlusOffsetMillis( type, offsetMillis ) {
+function typePlusOffsetMillis( offsetMillis, type ) {
     if ( !isValidDuration( offsetMillis ) )
         throw new Error();
     return mapTypeLeafNodes( type, function ( type ) {
@@ -250,8 +250,8 @@ function typePlusOffsetMillis( type, offsetMillis ) {
                 type.offsetMillis + offsetMillis, type.leafInfo );
         } else if ( type.op === "anytimeFn" ) {
             return typeAnytimeFn(
-                typePlusOffsetMillis( type.demand, offsetMillis ),
-                typePlusOffsetMillis( type.response, offsetMillis ),
+                typePlusOffsetMillis( offsetMillis, type.demand ),
+                typePlusOffsetMillis( offsetMillis, type.response ),
                 type.leafInfo );
         } else {
             throw new Error();
@@ -402,14 +402,16 @@ function behId( type ) {
 }
 // TODO: See what this would be called in Sirea.
 function behSeq( behOne, behTwo ) {
-    var how = typesUnify( behOne.outType, behTwo.inType );
-    if ( how === null )
+    // TODO: This seems to work just fine when typesUnify's parameters
+    // are switched. Figure out why.
+    var diff = typesUnify( behOne.outType, behTwo.inType );
+    if ( diff === null )
         throw new Error();
     
     var result = {};
     result.inType = behOne.inType;
     result.outType =
-        typePlusOffsetMillis( behTwo.outType, how.offsetMillis );
+        typePlusOffsetMillis( diff.offsetMillis, behTwo.outType );
     result.install = function ( context, inSigs, outSigs ) {
         var pairs =
             makePairsForType( context.startMillis, behOne.outType );
@@ -418,11 +420,16 @@ function behSeq( behOne, behTwo ) {
     };
     return result;
 }
-function behSeqs( first, var_args ) {
-    return _.arrFoldl( first, _.arrCut( arguments, 1 ),
+function behSeqsArr( arr ) {
+    if ( arr.length === 0 )
+        throw new Error();
+    return _.arrFoldl( arr[ 0 ], _.arrCut( arr, 1 ),
         function ( a, b ) {
             return behSeq( a, b );
         } );
+}
+function behSeqs( first, var_args ) {
+    return behSeqsArr( _.arrCut( arguments ) );
 }
 
 
@@ -1562,7 +1569,7 @@ function behDelay( delayMillis, type ) {
         throw new Error();
     var result = {};
     result.inType = type;
-    result.outType = typePlusOffsetMillis( type, delayMillis );
+    result.outType = typePlusOffsetMillis( delayMillis, type );
     result.install = function ( context, inSigs, outSigs ) {
         eachTypeLeafNodeOver( inSigs, outSigs,
             function ( type, inSig, outSig ) {

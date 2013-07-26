@@ -65,11 +65,12 @@ _.appendDom( window, { load: function () {
     _.appendDom( document.body,
         makeTestForResponseOverLinkedPair().dom );
     _.appendDom( document.body, makeTestForBehaviors().dom );
+    _.appendDom( document.body, makeTestForBehCall().dom );
 } } );
 </script>
 </head>
 <body>
-<p>Below, observe three tests as the mouse moves. Don't worry, the
+<p>Below, observe four tests as the mouse moves. Don't worry, the
     one-second delay is part of the test:</p>
 </body>
 </html>
