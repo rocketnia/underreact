@@ -272,6 +272,18 @@ function mapTypeLeafInfo( type, func ) {
     } );
 }
 
+function stripType( type ) {
+    return mapTypeLeafInfo( type, function ( type ) {
+        if ( type.op === "atom" ) {
+            return null;
+        } else if ( type.op === "anytimeFn" ) {
+            return null;
+        } else {
+            throw new Error();
+        }
+    } );
+}
+
 function makeOffsetMillisMap() {
     return new Map().init( {
         keyHash: function ( k ) {

@@ -51,6 +51,7 @@ Map.prototype.init = function ( opts ) {
     this.keyHash_ = opts.keyHash;
     this.keyIsoAssumingHashIso_ = opts.keyIsoAssumingHashIso;
     this.contents_ = {};
+    this.size_ = 0;
     return this;
 };
 Map.prototype.hash_ = function ( k ) {
@@ -66,6 +67,10 @@ Map.prototype.getEntry_ = function ( k ) {
         return self.keyIsoAssumingHashIso_.call( {}, entry.key, k ) &&
             entry;
     } ) || null;
+};
+// TODO: See if we're actually going to use this.
+Map.prototype.size = function () {
+    return this.size_;
 };
 Map.prototype.has = function ( k ) {
     return !!this.getEntry_( k );
@@ -86,8 +91,10 @@ Map.prototype.set = function ( k, v ) {
         return self.keyIsoAssumingHashIso_.call( {}, entry.key, k ) &&
             entry;
     } );
-    if ( !entry )
+    if ( !entry ) {
+        self.size_++;
         bin.push( entry = { key: k } );
+    }
     entry.val = v;
 };
 Map.prototype.del = function ( k ) {
@@ -96,11 +103,16 @@ Map.prototype.del = function ( k ) {
     var bin = self.contents_[ hash ];
     if ( !bin )
         return;
-    bin = self.contents_[ hash ] =
-        _.arrKeep( bin, function ( entry ) {
-            return !self.keyIsoAssumingHashIso_.call( {},
-                entry.key, k );
-        } );
+    var hadIt = false;
+    bin = self.contents_[ hash ] = _.arrRem( bin, function ( entry ) {
+        var thisOne =
+            self.keyIsoAssumingHashIso_.call( {}, entry.key, k );
+        if ( thisOne )
+            hadIt = true;
+        return thisOne;
+    } );
+    if ( hadIt )
+        self.size_--;
     if ( bin.length === 0 )
         delete self.contents_[ hash ];
 };
@@ -132,6 +144,18 @@ Map.prototype.map = function ( func ) {
     } );
     this.each( function ( k, v ) {
         result.set( k, func( v, k ) );
+    } );
+    return result;
+};
+Map.prototype.copy = function () {
+    return this.map( function ( v, k ) {
+        return v;
+    } );
+};
+Map.prototype.plus = function ( other ) {
+    var result = this.copy();
+    other.each( function ( k, v ) {
+        result.set( k, v );
     } );
     return result;
 };

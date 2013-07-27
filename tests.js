@@ -214,17 +214,7 @@ function makeTestForResponseOverLinkedPair() {
     return result;
 }
 
-function convenientlyInstallBehaviorWithCaps( caps, var_args ) {
-    var beh = behSeqsArr( _.arrCut( arguments, 1 ) );
-    if ( !(beh.inType.op === "times"
-        && beh.inType.second.op === "atom"
-        && beh.outType.op === "atom") )
-        throw new Error();
-    if ( typesUnify( caps, beh.inType.first ) === null )
-        throw new Error();
-    var delayMillis =
-        beh.outType.offsetMillis - beh.inType.second.offsetMillis;
-    
+function makeConvenientHarness() {
     var nowMillis = new Date().getTime();
     function deferForBatching( func ) {
         setTimeout( function () {
@@ -240,39 +230,61 @@ function convenientlyInstallBehaviorWithCaps( caps, var_args ) {
         explicitlyIgnoreMembraneDemand( membranePair.b.membrane );
     } );
     var onBeginObj = makeOnBegin();
-    var step1 = makeLinkedSigPair( nowMillis );
-    var step2 = makeLinkedSigPair( nowMillis );
-    beh.install(
-        {
-            startMillis: nowMillis,
-            membrane: membranePair.b.membrane,
-            onBegin: onBeginObj.onBegin
-        },
-        typeTimes( caps,
-            typeAtom(
-                beh.inType.second.offsetMillis, step1.readable ) ),
-        typeAtom( beh.outType.offsetMillis, step2.writable )
-    );
-    onBeginObj.begin();
-    step2.readable.readEachEntry( function ( entry ) {
-        // Do nothing.
-    } );
+    var inPair = makeLinkedSigPair( nowMillis );
+    var outPair = makeLinkedSigPair( nowMillis );
     
-    // TODO: Keep tuning these constants based on the interval
-    // frequency we actually achieve, rather than the one we shoot
-    // for.
-    var intervalMillis = 10;
-    var stabilityMillis = 500;  // 20;
-    var otherOutStabilityMillis = 1000000;
-    setInterval( function () {
-        var nowMillis = new Date().getTime();
-        step1.writable.history.setData(
-            [], nowMillis, nowMillis + stabilityMillis );
-        membranePair.a.membrane.raiseOtherOutPermanentUntilMillis(
-            nowMillis + otherOutStabilityMillis );
-        membranePair.b.membrane.raiseOtherOutPermanentUntilMillis(
-            nowMillis + otherOutStabilityMillis );
-    }, intervalMillis );
+    var result = {};
+    result.context = {
+        startMillis: nowMillis,
+        membrane: membranePair.b.membrane,
+        onBegin: onBeginObj.onBegin
+    };
+    result.appActivityInSig = inPair.readable;
+    result.appActivityOutSig = outPair.writable;
+    result.begin = function () {
+        onBeginObj.begin();
+        outPair.readable.readEachEntry( function ( entry ) {
+            // Do nothing.
+        } );
+        
+        // TODO: Keep tuning these constants based on the interval
+        // frequency we actually achieve, rather than the one we shoot
+        // for.
+        var intervalMillis = 10;
+        var stabilityMillis = 500;  // 20;
+        var otherOutStabilityMillis = 1000000;
+        setInterval( function () {
+            var nowMillis = new Date().getTime();
+            inPair.writable.history.setData(
+                [], nowMillis, nowMillis + stabilityMillis );
+            membranePair.a.membrane.raiseOtherOutPermanentUntilMillis(
+                nowMillis + otherOutStabilityMillis );
+            membranePair.b.membrane.raiseOtherOutPermanentUntilMillis(
+                nowMillis + otherOutStabilityMillis );
+        }, intervalMillis );
+    };
+    return result;
+}
+
+function convenientlyInstallBehaviorWithCaps( caps, var_args ) {
+    var beh = behSeqsArr( _.arrCut( arguments, 1 ) );
+    if ( !(beh.inType.op === "times"
+        && beh.inType.second.op === "atom"
+        && beh.outType.op === "atom") )
+        throw new Error();
+    if ( typesUnify( caps, beh.inType.first ) === null )
+        throw new Error();
+    
+    var harness = makeConvenientHarness();
+    beh.install(
+        harness.context,
+        typeTimes( caps,
+            typeAtom( beh.inType.second.offsetMillis,
+                harness.appActivityInSig ) ),
+        typeAtom( beh.outType.offsetMillis,
+            harness.appActivityOutSig )
+    );
+    harness.begin();
 }
 
 function convenientlyInstallBehavior( var_args ) {
@@ -305,7 +317,24 @@ function makeTestForBehaviors() {
     return { dom: dom };
 }
 
+// TODO: If we make behToCap a general-use utility, see if it should
+// have a time offset parameter. Currently it just relies on whatever
+// time offsets exist in the behavior's own inType and outType.
+function behToCap( beh ) {
+    return typeAnytimeFn( beh.inType, beh.outType, {
+        isConnected: function () {
+            return true;
+        },
+        doStaticInvoke: function (
+            context, delayMillis, inSigs, outSigs ) {
+            
+            beh.install( context, inSigs, outSigs );
+        }
+    } );
+}
+
 function makeTestForBehCall() {
+    
     // NOTE: Although we delay the mouse-measurement demand by two
     // seconds, we demand the measurement at the midpoint between our
     // demand and the response, so we actually observe a delay of only
@@ -315,27 +344,8 @@ function makeTestForBehCall() {
     
     var dom = null;
     
-    // TODO: If we make behToCap a general-use utility, see if it
-    // should have a time offset parameter. Currently it just relies
-    // on whatever time offsets exist in the behavior's own inType and
-    // outType.
-    function behToCap( beh ) {
-        var result = {};
-        result.impl = typeAnytimeFn( beh.inType, beh.outType, {
-            isConnected: function () {
-                return true;
-            },
-            doStaticInvoke: function (
-                context, delayMillis, inSigs, outSigs ) {
-                
-                beh.install( context, inSigs, outSigs );
-            }
-        } );
-        result.type = typeAnytimeFn( beh.inType, beh.outType, null );
-        return result;
-    }
-    
     var mouseCap = behToCap( behMouseQuery() );
+    var mouseCapType = stripType( mouseCap );
     var domCap = behToCap( behDomDiagnostic(
         function ( linkMetadata ) {
         
@@ -344,7 +354,8 @@ function makeTestForBehCall() {
         // use linear types?
         dom = linkMetadata.dom;
     } ) );
-    var capsType = typeTimes( mouseCap.type, domCap.type );
+    var domCapType = stripType( domCap );
+    var capsType = typeTimes( mouseCapType, domCapType );
     
     function d1( type ) {
         return typePlusOffsetMillis( measurementDelayMillis, type );
@@ -356,32 +367,91 @@ function makeTestForBehCall() {
     var atom = typeAtom( 0, null );
     
     convenientlyInstallBehaviorWithCaps(
-        typeTimes( mouseCap.impl, domCap.impl ),
+        typeTimes( mouseCap, domCap ),
         
         // Delay to measurementDelayMillis, then call mouseCap.
         behFirst( behDup( capsType ), atom ),
         behAssocrp( capsType, capsType, atom ),
         behSecond( capsType,
-            behFirst( behFst( mouseCap.type, domCap.type ), atom ) ),
+            behFirst( behFst( mouseCapType, domCapType ), atom ) ),
         behDelay( measurementDelayMillis,
-            typeTimes( capsType, typeTimes( mouseCap.type, atom ) ) ),
-        behSecond( d1( capsType ), behCall( d1( mouseCap.type ) ) ),
+            typeTimes( capsType, typeTimes( mouseCapType, atom ) ) ),
+        behSecond( d1( capsType ), behCall( d1( mouseCapType ) ) ),
         
         // Delay to mouseDelayMillis, then call domCap.
         behFirst( behDup( d1( capsType ) ), d1( atom ) ),
         behAssocrp( d1( capsType ), d1( capsType ), d1( atom ) ),
         behSecond( d1( capsType ),
-            behFirst(
-                behSnd( d1( mouseCap.type ), d1( domCap.type ) ),
+            behFirst( behSnd( d1( mouseCapType ), d1( domCapType ) ),
                 d1( atom ) ) ),
         behDelay( mouseDelayMillis - measurementDelayMillis,
             d1( typeTimes( capsType,
-                typeTimes( domCap.type, atom ) ) ) ),
-        behSecond( d2( capsType ), behCall( d2( domCap.type ) ) ),
+                typeTimes( domCapType, atom ) ) ) ),
+        behSecond( d2( capsType ), behCall( d2( domCapType ) ) ),
         
         // Drop the capabilities.
         behSnd( d2( capsType ), d2( atom ) )
     );
+    
+    return { dom: dom };
+}
+
+function makeTestForLambdaLang() {
+    
+    // NOTE: Although we delay the mouse-measurement demand by two
+    // seconds, we demand the measurement at the midpoint between our
+    // demand and the response, so we actually observe a delay of only
+    // half that interval.
+    var mouseDelayMillis = 2000;
+    var measurementDelayMillis = mouseDelayMillis / 2;
+    
+    var dom = null;
+    
+    var $ = lambdaLang;
+    
+    function td01( type ) {
+        // Delay the type from step 0 to step 1.
+        return typePlusOffsetMillis( measurementDelayMillis, type );
+    }
+    function td02( type ) {
+        return typePlusOffsetMillis( mouseDelayMillis, type );
+    }
+    function ld01( expr ) {
+        // Delay a LambdaLangCode expression from step 0 to step 1.
+        return $.delay( measurementDelayMillis, expr );
+    }
+    function ld02( expr ) {
+        return $.delay( mouseDelayMillis, expr );
+    }
+    function ld12( expr ) {
+        return $.delay(
+            mouseDelayMillis - measurementDelayMillis, expr );
+    }
+    
+    var atom = typeAtom( 0, null );
+    
+    var harness = makeConvenientHarness();
+    
+    var envImpl = makeLambdaLangNameMap();
+    envImpl.set( "appActivity",
+        typeAtom( 0, harness.appActivityInSig ) );
+    envImpl.set( "mouse", behToCap( behMouseQuery() ) );
+    envImpl.set( "dom", behToCap( behDomDiagnostic(
+        function ( linkMetadata ) {
+        
+        // TODO: This is awkward. If this capability is called twice,
+        // we'll end up with only one of the DOM elements. Should this
+        // use linear types?
+        dom = linkMetadata.dom;
+    } ) ) );
+    
+    runLambdaLang( harness.context, envImpl,
+        td02( typeAtom( 0, harness.appActivityOutSig ) ),
+        $.call( ld02( $.va( "dom" ) ), td02( atom ),
+            ld12(
+                $.call( ld01( $.va( "mouse" ) ), td01( atom ),
+                    ld01( $.va( "appActivity" ) ) ) ) ) );
+    harness.begin();
     
     return { dom: dom };
 }

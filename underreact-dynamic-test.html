@@ -57,6 +57,7 @@ var _ = rocketnia.lathe;
 </script>
 <script type="text/javascript" src="underreact-dynamic.js"></script>
 <script type="text/javascript" src="underreact-static.js"></script>
+<script type="text/javascript" src="underreact-lambda.js"></script>
 <script type="text/javascript" src="tests.js"></script>
 <script type="text/javascript">"use strict";
 _.appendDom( window, { load: function () {
@@ -66,11 +67,12 @@ _.appendDom( window, { load: function () {
         makeTestForResponseOverLinkedPair().dom );
     _.appendDom( document.body, makeTestForBehaviors().dom );
     _.appendDom( document.body, makeTestForBehCall().dom );
+    _.appendDom( document.body, makeTestForLambdaLang().dom );
 } } );
 </script>
 </head>
 <body>
-<p>Below, observe four tests as the mouse moves. Don't worry, the
+<p>Below, observe five tests as the mouse moves. Don't worry, the
     one-second delay is part of the test:</p>
 </body>
 </html>
