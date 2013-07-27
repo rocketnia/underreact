@@ -275,6 +275,9 @@ function sometimesLog( var_args ) {
     }
 }
 
+var debugWarnings = [];
+
+
 function ActivityHistory() {}
 ActivityHistory.prototype.init = function ( opts ) {
     if ( !isValidTime( opts.startMillis ) )
@@ -559,7 +562,7 @@ function visualizeHistoriesOnCanvas( histories, opt_opts ) {
 function MessageMembrane() {}
 MessageMembrane.prototype.init = function (
     outPermanentUntilMillis, deferForBatching, sendMessage,
-    syncOnInDemandAvailable ) {
+    syncOnInDemandAvailable, opt_debugInfo ) {
     
     if ( !isValidTime( outPermanentUntilMillis ) )
         throw new Error();
@@ -701,19 +704,30 @@ MessageMembrane.prototype.init = function (
                             entsDelay( delayMillis, demandEntries );
                         // TODO: See if we can set up a debug
                         // configuration that makes sense for this.
-                        false && _.appendDom( document.body,
-                            _.dom( "p",
+                        var debugWarningsIndex = debugWarnings.length;
+                        debugWarnings.push( {
+                            debugInfo: opt_debugInfo,
+                            offendingInterval: offendingInterval,
+                            demandEntries: demandEntries,
+                            delayedDemandEntries: delayedDemandEnries,
+                            myEntries: myEntries,
+                            canvas: _.dom( "p",
                                 visualizeHistoriesOnCanvas( [
                                     offendingInterval,
                                     delayedDemandEntries,
                                     myEntries
                                 ] ) )
-                        );
+                        } );
                         // TODO: See if we can set up a debug
                         // configuration that makes sense for this.
                         console.log(
                             "Warning: A membrane neglected to " +
-                            "respond to all its demand." );
+                            "respond to all its demand. See " +
+                            "debugWarnings[ " +
+                                debugWarningsIndex + " ]. " +
+                            JSON.stringify( opt_debugInfo === void 0 ?
+                                null : opt_debugInfo ) + ". " +
+                            S);
                     }
                     
                     maybeLocalResponseData = { val: [
@@ -1121,7 +1135,7 @@ MessageMembrane.prototype.getNewOutDemander = function (
 //
 // MessageMembrane.prototype.init = function (
 //     outPermanentUntilMillis, deferForBatching, sendMessage,
-//     syncOnInDemandAvailable )
+//     syncOnInDemandAvailable, opt_debugInfo )
 // MessageMembrane.prototype.receiveMessage = function ( message )
 // MessageMembrane.prototype.getInPermanentUntilMillis = function ()
 // MessageMembrane.prototype.getInDemandHistoryEntries = function ()
@@ -1153,11 +1167,12 @@ MessageMembrane.prototype.getNewOutDemander = function (
 
 
 function makeLinkedMembranePair(
-    outPermanentUntilMillis, deferForBatching ) {
+    outPermanentUntilMillis, deferForBatching, opt_debugInfo ) {
     
     var aListeners = [];
     var aMembrane = new MessageMembrane().init(
-        outPermanentUntilMillis, deferForBatching,
+        outPermanentUntilMillis,
+        deferForBatching,
         function ( message ) {  // sendMessage
             bMembrane.receiveMessage( message );
         },
@@ -1165,11 +1180,17 @@ function makeLinkedMembranePair(
             _.arrEach( aListeners, function ( listener ) {
                 listener();
             } );
-        } );
+        },
+        {
+            type: "makeLinkedMembranePair a",
+            orig: opt_debugInfo === void 0 ? null : opt_debugInfo
+        }
+    );
     
     var bListeners = [];
     var bMembrane = new MessageMembrane().init(
-        outPermanentUntilMillis, deferForBatching,
+        outPermanentUntilMillis,
+        deferForBatching,
         function ( message ) {  // sendMessage
             aMembrane.receiveMessage( message );
         },
@@ -1177,7 +1198,12 @@ function makeLinkedMembranePair(
             _.arrEach( bListeners, function ( listener ) {
                 listener();
             } );
-        } );
+        },
+        {
+            type: "makeLinkedMembranePair b",
+            orig: opt_debugInfo === void 0 ? null : opt_debugInfo
+        }
+    );
     
     return {
         a: {
@@ -1433,6 +1459,8 @@ UselessResource.prototype.init = function (
     
     var self = this;
     
+    // TODO: See if we should pass some kind of debugInfo to this
+    // MessageMembrane.
     self.clientMembrane_ = new MessageMembrane().init(
         outPermanentUntilMillis, deferForBatching, sendMessage,
         function () {  // syncOnInDemandAvailable
@@ -1496,6 +1524,8 @@ DispatcherResource.prototype.init = function ( makeResource,
         makeVal: function (
             discriminator, inAndOutPermanentUntilMillis ) {
             
+            // TODO: See if we should pass some kind of debugInfo to
+            // this MessageMembrane.
             var resourceMembrane = new MessageMembrane().init(
                 inAndOutPermanentUntilMillis, deferForBatching,
                 function ( message ) {
@@ -1560,6 +1590,8 @@ DispatcherResource.prototype.init = function ( makeResource,
         }
     } );
     
+    // TODO: See if we should pass some kind of debugInfo to this
+    // MessageMembrane.
     self.clientMembrane_ = new MessageMembrane().init(
         outPermanentUntilMillis, deferForBatching, sendMessage,
         function () {  // syncOnInDemandAvailable

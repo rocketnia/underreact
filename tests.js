@@ -69,7 +69,9 @@ function makeTestForDemandOverLinkedPair() {
         startMillis: now
     } );
     
-    var pair = makeLinkedMembranePair( now, deferForBatching );
+    var pair = makeLinkedMembranePair( now, deferForBatching, {
+        type: "makeTestForDemandOverLinkedPair"
+    } );
     pair.a.syncOnInDemandAvailable( function () {
         explicitlyIgnoreMembraneDemand( pair.a.membrane );
     } );
@@ -153,7 +155,9 @@ function makeTestForResponseOverLinkedPair() {
         startMillis: now
     } );
     
-    var pair = makeLinkedMembranePair( now, deferForBatching );
+    var pair = makeLinkedMembranePair( now, deferForBatching, {
+        type: "makeTestForResponseOverLinkedPair"
+    } );
     connectMouseQuery( pair.b );
     pair.a.syncOnInDemandAvailable( function () {
         explicitlyIgnoreMembraneDemand( pair.a.membrane );
@@ -222,7 +226,9 @@ function makeConvenientHarness() {
         }, 0 );
     }
     var membranePair =
-        makeLinkedMembranePair( nowMillis, deferForBatching );
+        makeLinkedMembranePair( nowMillis, deferForBatching, {
+            type: "makeConvenientHarness"
+        } );
     membranePair.a.syncOnInDemandAvailable( function () {
         explicitlyIgnoreMembraneDemand( membranePair.a.membrane );
     } );
