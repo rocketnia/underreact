@@ -727,8 +727,7 @@ MessageMembrane.prototype.init = function (
                             "debugWarnings[ " +
                                 debugWarningsIndex + " ]. " +
                             JSON.stringify( opt_debugInfo === void 0 ?
-                                null : opt_debugInfo ) + ". " +
-                            S);
+                                null : opt_debugInfo ) + "." );
                     }
                     
                     maybeLocalResponseData = { val: [
