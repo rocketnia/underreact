@@ -709,7 +709,8 @@ MessageMembrane.prototype.init = function (
                             debugInfo: opt_debugInfo,
                             offendingInterval: offendingInterval,
                             demandEntries: demandEntries,
-                            delayedDemandEntries: delayedDemandEnries,
+                            delayedDemandEntries:
+                                delayedDemandEntries,
                             myEntries: myEntries,
                             canvas: _.dom( "p",
                                 visualizeHistoriesOnCanvas( [
