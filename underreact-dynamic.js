@@ -1300,9 +1300,10 @@ function connectMouseQuery( pairHalf ) {
         mousePosition = JSON.stringify( [ e.clientX, e.clientY ] );
     } } );
     var responsesToGive = [];
+    var demandPermanentUntilMillis = -1 / 0;
     pairHalf.syncOnInDemandAvailable( function () {
         var nowMillis = new Date().getTime();
-        var permanentUntilMillis =
+        demandPermanentUntilMillis =
             pairHalf.membrane.getInPermanentUntilMillis();
         _.arrEach( pairHalf.membrane.getInDemandHistoryEntries(),
             function ( demand ) {
@@ -1345,7 +1346,7 @@ function connectMouseQuery( pairHalf ) {
             } );
         } );
         pairHalf.membrane.forgetInDemandBeforeDemandMillis(
-            Math.min( permanentUntilMillis, nowMillis ) );
+            Math.min( demandPermanentUntilMillis, nowMillis ) );
     } );
     // TODO: Keep tuning these constants based on the interval
     // frequency we actually achieve, rather than the one we shoot
@@ -1421,8 +1422,10 @@ function connectMouseQuery( pairHalf ) {
         } );
         responsesToGive = forLater;
         
-        pairHalf.membrane.raiseOtherOutPermanentUntilMillis(
-            measurementStartMillis );
+        if ( demandPermanentUntilMillis !== -1 / 0 )
+            pairHalf.membrane.raiseOtherOutPermanentUntilMillis(
+                Math.min( demandPermanentUntilMillis,
+                    measurementEndMillis ) );
     }, intervalMillis );
 }
 
