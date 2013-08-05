@@ -1,4 +1,4 @@
-// underreact-dynamic.js
+// underreact-async.js
 
 // Copyright (c) 2013, Ross Angle
 // All rights reserved.

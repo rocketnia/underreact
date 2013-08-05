@@ -22,7 +22,8 @@ behaviors dedicated to very specific tasks:
 * Dump a signal to a DOM element for visualization as text.
 
 Now that your expectations are low enough, feel free to take a look at
-[some Underreact test code in action](http://rocketnia.github.io/underreact/underreact-dynamic-test.html).
+[some Underreact test code in
+action](http://rocketnia.github.io/underreact/test/tests.html).
 
 At this point, Underreact has an implementation of demand monitors as
 well, but I haven't tested it yet.

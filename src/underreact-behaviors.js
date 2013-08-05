@@ -1,4 +1,4 @@
-// underreact-static.js
+// underreact-behaviors.js
 
 // Copyright (c) 2013, Ross Angle
 // All rights reserved.
