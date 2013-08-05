@@ -1190,11 +1190,11 @@ function censorEntry( entry ) {
 // NOTE: Unlike Sirea's disjoin, this version has a type which is a
 // somewhat complicated refinement of the ideal type signature:
 //
-// (x & (y | z)) ~> ((x & y) | (x & z))
+// (x * (y + z)) ~> ((x * y) + (x * z))
 //
 // The refinement would state that every spacetime coordinate
 // appearing in the x type must appear identically, at least once, in
-// the (y | z) type. The operation will perform no implicit
+// the (y + z) type. The operation will perform no implicit
 // synchronization or communication.
 //
 // We don't actually implement multiple partitions yet, so for now we
@@ -1458,13 +1458,40 @@ function delayAddEntry( outSig, delayMillis, entry ) {
     } );
 }
 
+// NOTE: There's an extra requirement in the type signature of
+// behClosure, much like behDisjoin and behMerge: The closure's
+// parameter signal must be active in enough (partition, time offset)
+// coordinates to act as a filter for the encapsulated signal.
+//
+// If the behavior is called conditionally (thanks to having been
+// split through behDisjoin), we will still install it once for each
+// call site, but those conditional call sites should only be
+// receiving appropriately masked versions of the encapsulated signal,
+// as though that signal were split between the behDisjoin branches
+// itself. Unfortunately, we can't split that signal at the
+// behDisjoin, because behDisjoin doesn't require enough evidence to
+// do that splitting. So instead, we fully duplicate the signal at run
+// time but then mask it using the parameter signal itself.
+//
+// (TODO: If we ever want behDisjoin to do the splitting, it'll need
+// to pay attention to the parameters of the typeAnytimeFn() signals
+// its splitting, much like behMerge already does. We'll still need to
+// keep this proviso on behClosure, because then the parameter type is
+// a valid way for behDisjoin to predict whether it has enough
+// information to filter the signal.)
+//
 // TODO: See what this would be called in Sirea, if anything.
+//
 function behClosure( beh ) {
     var inputPairType = beh.inType;
     if ( beh.inType.op !== "times" )
         throw new Error();
     var encapsulatedType = beh.inType.first;
     var paramType = beh.inType.second;
+    
+    if ( !typesSupplyActivityEvidence(
+        [ paramType ], encapsulatedType ) )
+        throw new Error();
     
     var result = {};
     result.inType = encapsulatedType;
@@ -1536,10 +1563,24 @@ function behClosure( beh ) {
                 writables: delayedEncapsulatedPairs.writables
             } );
             
-            beh.install( context,
-                typeTimes(
-                    delayedEncapsulatedPairs.readables, inSigsParam ),
-                outSigsResult );
+            // NOTE: In order to mask the encapsulated signal based on
+            // the parameter signal, we're using behDisjoin.
+            //
+            // NOTE: Thanks to the typePlus( _, typeOne() ) pattern
+            // we're using here, we're committing no crimes against
+            // duration coupling.
+            //
+            behSigs(
+                behDisjoin( encapsulatedType, paramType, typeOne() ),
+                typeEither(
+                    beh,
+                    behDrop(
+                        typeTimes( encapsulatedType, typeOne() ) )
+                )
+            ).install( context,
+                typeTimes( delayedEncapsulatedPairs.readables,
+                    typePlus( inSigsParam, typeOne() ) ),
+                typePlus( outSigsResult, typeOne() ) );
         } );
     };
     return result;
