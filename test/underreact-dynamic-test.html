@@ -45,19 +45,17 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 <style type="text/css">
 </style>
 
-<!--
-TODO: Stop hotlinking this to Lathe's GitHub Pages site. It's probably
-a pretty stable URL, but it's inconvenient for offline development.
--->
-<script type="text/javascript"
-    src="http://rocketnia.github.io/lathe/lathe.js"></script>
+<script type="text/javascript" src="../lib/lathe.js"></script>
 
 <script type="text/javascript">"use strict";
 var _ = rocketnia.lathe;
 </script>
-<script type="text/javascript" src="underreact-dynamic.js"></script>
-<script type="text/javascript" src="underreact-static.js"></script>
-<script type="text/javascript" src="underreact-lambda.js"></script>
+<script type="text/javascript" src="../src/underreact-dynamic.js"
+    ></script>
+<script type="text/javascript" src="../src/underreact-static.js"
+    ></script>
+<script type="text/javascript" src="../src/underreact-lambda.js"
+    ></script>
 <script type="text/javascript" src="tests.js"></script>
 <script type="text/javascript">"use strict";
 _.appendDom( window, { load: function () {
