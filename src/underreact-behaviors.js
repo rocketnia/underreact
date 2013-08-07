@@ -1874,15 +1874,22 @@ function connectMembraneToBehaviors( pairHalf, context, delayToBeh ) {
             // loops through the whole pool.
             raiseOtherOutPermanentUntilMillis();
         } );
+        var onBeginObj = makeOnBegin();
         behSeqs(
             behDupPar(
                 behDelay( delayMillis, typeAtom( 0, null ) ),
                 beh
             ),
             behZip()
-        ).install( context,
+        ).install(
+            {
+                startMillis: startMillis,
+                membrane: context.membrane,
+                onBegin: onBeginObj.onBegin
+            },
             typeAtom( 0, demandPair.readable ),
             typeAtom( delayMillis, demandAndResponsePair.writable ) );
+        onBeginObj.begin();
         bin.push( poolEntry );
         return poolEntry;
     }
