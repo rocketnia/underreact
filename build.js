@@ -107,6 +107,8 @@ _.arrMapConcurrent( [
     var uBehaviorsSrc = src[ 2 ];
     var uLambdaSrc = src[ 3 ];
     
+    // TODO: Use this to help make the full source into a quine for
+    // code self-distribution.
     function escapeForJs( str ) {
         return JSON.stringify( str ).
             replace( /\u2028/g, "\\u2028" ).  // line separator
@@ -143,7 +145,7 @@ _.arrMapConcurrent( [
         "    result.behDisjoin = behDisjoin;\n" +
         "    return result;\n" +
         "})();\n" +
-        "})()\n";
+        "})()";
     var fullNodeSrc =
         "\"use strict\";\n" +
         "var exportsOrig = " + fullExprSrc + ";\n" +

@@ -6863,6 +6863,149 @@ function behYield( delayMillis ) {
     return result;
 }
 
+// TODO: See if we're ever going to use this. The point of writing it
+// was to warm up for writing non-inlined first-class behaviors (which
+// would come in handy for modeling beval and/or a delaying fixpoint
+// operator). As such, this is an experiment that maintains a dynamic
+// pool of installed behavior graphs. We should feel free to scrap
+// this for parts (i.e. cut and paste) once we have a real purpose for
+// it.
+function connectMembraneToBehaviors( pairHalf, context, delayToBeh ) {
+    
+    var pool = makeOffsetMap();
+    var demandPermanentUntilMillis = -1 / 0;
+    
+    function getOrMakePoolEntry( delayMillis, startMillis ) {
+        if ( startMillis < context.startMillis )
+            throw new Error();
+        if ( !pool.has( delayMillis ) )
+            pool.set( delayMillis, [] );
+        var bin = pool.get( delayMillis );
+        var poolEntry = _.arrAny( bin, function ( entry ) {
+            return entry.nextStartMillis <= startMillis && entry;
+        } );
+        if ( poolEntry )
+            return poolEntry;
+        var demandPair = makeLinkedSigPair( startMillis );
+        var demandAndResponsePair =
+            makeLinkedSigPair( startMillis + delayMillis );
+        var beh = delayToBeh( delayMillis );
+        if ( !(true
+            && !!typesUnify( typeAtom( 0, null ), beh.inType )
+            && typesAreEqual( delayMillis, beh.inType, beh.outType )
+        ) )
+            throw new Error();
+        poolEntry = {
+            nextStartMillis: startMillis,
+            responseAlreadyGivenMillis: startMillis + delayMillis,
+            demandSig: demandPair.writable
+        };
+        demandAndResponsePair.readable.readEachEntry(
+            function ( entry ) {
+            
+            if ( entry.maybeData === null )
+                return;
+            
+            poolEntry.responseAlreadyGivenMillis =
+                entry.maybeEndMillis.val;
+            pairHalf.membrane.setOutResponse(
+                delayMillis,
+                entry.maybeData.val[ 0 ],
+                entry.maybeData.val[ 1 ],
+                entry.startMillis,
+                entry.maybeEndMillis.val );
+            // TODO: For efficiency, see if we can avoid calling
+            // raiseOtherOutPermanentUntilMillis() so often, since it
+            // loops through the whole pool.
+            raiseOtherOutPermanentUntilMillis();
+        } );
+        behSeqs(
+            behDupPar(
+                behDelay( delayMillis, typeAtom( 0, null ) ),
+                beh
+            ),
+            behZip()
+        ).install( context,
+            typeAtom( 0, demandPair.readable ),
+            typeAtom( delayMillis, demandAndResponsePair.writable ) );
+        bin.push( poolEntry );
+        return poolEntry;
+    }
+    
+    function raiseOtherOutPermanentUntilMillis() {
+        var otherOutPermanentUntilMillis = demandPermanentUntilMillis;
+        pool.each( function ( delayMillis, bin ) {
+            _.arrEach( bin, function ( poolEntry ) {
+                if ( poolEntry.responseAlreadyGivenMillis <
+                    otherOutPermanentUntilMillis )
+                    otherOutPermanentUntilMillis =
+                        poolEntry.responseAlreadyGivenMillis;
+            } );
+        } );
+        if ( otherOutPermanentUntilMillis !== -1 / 0 )
+            pairHalf.membrane.raiseOtherOutPermanentUntilMillis(
+                otherOutPermanentUntilMillis );
+    }
+    
+    function retractPoolBeforeNextStartMillis( nextStartMillis ) {
+        var newPool = makeOffsetMap();
+        pool.each( function ( delayMillis, bin ) {
+            var newBin = _.arrKeep( bin, function ( poolEntry ) {
+                return poolEntry.nextStartMillis < nextStartMillis;
+            } );
+            if ( newBin.length !== 0 )
+                newPool.set( delayMillis, newBin );
+        } );
+        pool = newPool;
+    }
+    
+    pairHalf.syncOnInDemandAvailable( function () {
+        demandPermanentUntilMillis =
+            pairHalf.membrane.getInPermanentUntilMillis();
+        _.arrEach( pairHalf.membrane.getInDemandHistoryEntries(),
+            function ( demand ) {
+            
+            var delayMillis = demand.delayMillis;
+            _.arrEach( demand.demandDataHistory, function ( entry ) {
+                if ( entry.maybeData === null )
+                    return;
+                // TODO: For efficiency, see if we can avoid calling
+                // getOrMakePoolEntry() so often, since it loops
+                // through the whole pool.
+                var poolEntry = getOrMakePoolEntry(
+                    delayMillis, entry.startMillis );
+                poolEntry.demandSig.history.setData(
+                    entry.maybeData.val,
+                    entry.startMillis,
+                    entry.maybeEndMillis.val );
+                poolEntry.nextStartMillis = entry.maybeEndMillis.val;
+            } );
+        } );
+        pairHalf.membrane.forgetInDemandBeforeDemandMillis(
+            demandPermanentUntilMillis );
+        
+        // Clean up any pool entries we don't need.
+        //
+        // TODO: See if this is really the best time to do this.
+        //
+        // TODO: For efficiency, see if we're calling
+        // retractPoolBeforeNextStartMillis() infrequently enough,
+        // since it loops through the whole pool. This might be good
+        // enough.
+        //
+        // TODO: We're using a heuristic here. We release any pool
+        // entry which has been so neglected recently that it will
+        // definitely be ready for any upcoming demand. See if we
+        // should add a grace period to this (by subtracting a
+        // constant from the parameter), add a lower bound on the
+        // number of pool entries, and/or use some kind of
+        // probabilistic decay technique.
+        //
+        retractPoolBeforeNextStartMillis(
+            demandPermanentUntilMillis );
+    } );
+}
+
 // NOTE: We use a defer procedure as a parameter here, so that
 // feedback loops don't grind the entire page to a halt. However,
 // those loops will still execute forever, so be careful.
@@ -7425,8 +7568,7 @@ return (function () {
     result.behDisjoin = behDisjoin;
     return result;
 })();
-})()
-;
+})();
 for ( var k in exportsOrig )
     if ( {}.hasOwnProperty.call( exportsOrig, k ) )
         exports[ k ] = exportsOrig[ k ];
