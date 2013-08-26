@@ -1,0 +1,223 @@
+// reactive-staging.txt
+
+// This is a potential generalization of RDP for the purposes of
+// multi-stage programming, using a notion of "sum" that actually acts
+// as a product if the stage is early enough. See the August 2013
+// discussion "Static Choices and Offerings" in the "reactive-demand"
+// Google Group.
+//
+// This is just an incomplete sketch for now. This sketch also
+// incorporates dependent typing, but (for now) drifts away from
+// linear typing. To complete this sketch, we'll probably need to use
+// "Observational Equality, Now!" coercions as inequalities, so that
+// we can translate a Sigma's tag type to an observable (but partial)
+// value and then "invoke" that Sigma using some (partial) value that
+// fills in those gaps.
+
+
+// Notation notes:
+//
+// We want to be able to take a Sigma type and project it as though
+// it's a Pi type, as long as two conditions are met: The current
+// stage must be early enough that not all the branching information
+// has been decided yet, and we must not peek at the later-stage
+// information carried by the branches we view.
+//
+// We use the {s1..s2} notation on computations to formalize these
+// constraints. This notation signfies that the computation can freely
+// create atoms before stage s1 because those prior stages have a
+// bird's-eye view of this whole computation, and it can freely create
+// atoms after stage s2 because it's just dead code in that stage.
+//
+// When the result of a computation is a type, that computation is
+// only used for typechecking, so it's essentially dead code at every
+// stage, and we don't need these bounds.
+//
+// The (#bool s) type represents a boolean that's decided at stage s,
+// but which isn't necessarily visible to any one partition at stage
+// s. A visible boolean at stage s and partition p can be represented
+// as follows:
+//
+//   (#invoke
+//     (#typeSigma
+//       (#procureType (#bool s)) (#procureType (#atom s p)))
+//     1
+//     1)
+//
+// A multi-stage program will have ordered relationships between the
+// stages, but partitions cause a complication: A later stage is
+// constructed at a specific partition of an earlier stage. Because of
+// this, we at one point use the ternary notation (s1 @ p <= s2) to be
+// specific about which partition #procureStaticAtom can affect.
+
+_ : _ -> #type
+_ : _ -> {_.._} _
+_ : #stage
+_ : #partition
+_ : #type
+_ : _
+_ @ _ <= _
+_ @ _ < _
+#procureType _
+#procureStaticAtom _ _
+#procureDeadAtom _ _
+#invoke _ _ _
+1 (punned)
+_ * _ (punned)
+#bool _
+#atom _ _
+#ift _ _ _
+#typeSigma _ _
+_ *** _
+_ >>> _ (punned)
+#ppp _ _ _
+
+_ <= _ (abbreviation)
+_ < _
+#p _ _ _ (abbreviation)
+
+
+(s1 <= s2) stands for (s1 @ p <= s2), where p is a fresh variable
+  associated with a premise (p : #partition)
+
+(s1 < s2) stands for (s1 @ p < s2), where p is a fresh variable
+  associated with a premise (p : #partition)
+
+(#p s x y) stands for
+  (#invoke
+    (#typeSigma (#procureType (#bool s))
+      (#if s (#procureType x) (#procureType y)))
+    1
+    1)
+
+
+|-
+---
+1 : #type
+
+|-
+---
+1 : 1
+
+a : #type
+b : #type
+---
+a * b : #type
+
+x : #type
+y : #type
+a : x
+b : y
+---
+a * b : x * y
+
+s1 : #stage
+s2 : #stage
+s3 : #stage
+s4 : #stage
+s1 <= s2
+s2 <= s3
+s3 <= s4
+a : #type
+b : #type
+behavior : a -> {s2..s3} b
+---
+behavior : a -> {s1..s4} b
+
+a : #type
+---
+#procureType a : 1 -> #type
+
+s1 : #stage
+s2 : #stage
+p : #partition
+s1 @ p < s2
+---
+#procureStaticAtom s1 p : 1 -> {s2..s2} #atom s1 p
+
+s1 : #stage
+s2 : #stage
+s1 < s2
+p : #partition
+---
+#procureDeadAtom s2 p : 1 -> {s1..s1} #atom s2 p
+
+s : #stage
+---
+#bool s : #type
+
+s : #stage
+p : #partition
+---
+#atom s p : #type
+
+// NOTE: It seems we don't need to do anything special with the stage
+// of the boolean.
+// TODO: Make sure that's true.
+s : #stage
+env : #type
+then : env -> #type
+else : env -> #type
+---
+#ift s then else : (#bool s * env) -> #type
+
+arg : #type
+op : arg -> #type
+argVal : arg
+---
+#invoke op arg argVal : #type
+
+env : #type
+envToTypeA : env -> #type
+(envVal : env) |-
+  (tagAndEnvToTypeB : (#invoke envToTypeA env envVal * env) -> #type)
+---
+#typeSigma envToTypeA tagAndEnvToTypeB : env -> #type
+
+s1 : #stage
+s2 : #stage
+s1 <= s2
+ax : #type
+ay : #type
+bx : #type
+by : #type
+a : ax -> {s1..s2} ay
+b : bx -> {s1..s2} by
+---
+a *** b : (ax * bx) -> {s1..s2} (ay * by)
+
+// TODO: Reimagine this for Sigmas in general, rather than just
+// (#p s a b).
+s1 : #stage
+s2 : #stage
+s1 <= s2
+s : #stage
+ax : #type
+ay : #type
+bx : #type
+by : #type
+a : ax -> {s1..s2} ay
+b : bx -> {s1..s2} by
+---
+#ppp s a b : #p s ax bx -> {s1..s2} #p s ay by
+
+s1 : #stage
+s2 : #stage
+s1 <= s2
+x : #type
+y : #type
+z : #type
+a : x -> {s1..s2} y
+b : y -> {s1..s2} z
+---
+a >>> b : x -> {s1..s2} z
+
+s1 : #stage
+s2 : #stage
+s1 <= s2
+x : #type
+y : #type
+a : x -> {s1..s2} y
+b : y -> #type
+---
+a >>> b : x -> #type
