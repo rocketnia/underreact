@@ -13,6 +13,14 @@
 // we can translate a Sigma's tag type to an observable (but partial)
 // value and then "invoke" that Sigma using some (partial) value that
 // fills in those gaps.
+//
+// A normal RDP atomic signal has a (partition, time offset) pair. In
+// these notes, "partition" refers to that pair as a whole, and it may
+// also generalize to other kinds of partition. The important thing
+// for these notes is that it's somehow expensive or impossible to
+// take data from one partition to another, so that we're strongly
+// motivated to model that communication explicitly (e.g. with bcross
+// or bdelay).
 
 
 // Notation notes:
