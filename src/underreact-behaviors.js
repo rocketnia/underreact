@@ -39,18 +39,24 @@ function typeAtom( offsetMillis, leafInfo ) {
         offsetMillis: offsetMillis, leafInfo: leafInfo };
 }
 function typeTimes( first, second ) {
+    if ( first === void 0 || second === void 0 )
+        throw new Error();
     return { op: "times", first: first, second: second };
 }
 function typeOne() {
     return { op: "one" };
 }
 function typePlus( left, right ) {
+    if ( left === void 0 || right === void 0 )
+        throw new Error();
     return { op: "plus", left: left, right: right };
 }
 function typeZero() {
     return { op: "zero" };
 }
 function typeAnytimeFn( demand, response, leafInfo ) {
+    if ( demand === void 0 || response === void 0 )
+        throw new Error();
     return { op: "anytimeFn",
         demand: demand, response: response, leafInfo: leafInfo };
 }

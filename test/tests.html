@@ -66,11 +66,13 @@ _.appendDom( window, { load: function () {
     _.appendDom( document.body, makeTestForBehaviors().dom );
     _.appendDom( document.body, makeTestForBehCall().dom );
     _.appendDom( document.body, makeTestForLambdaLang().dom );
+    _.appendDom( document.body,
+        makeTestForLambdaLangConvenient().dom );
 } } );
 </script>
 </head>
 <body>
-<p>Below, observe five tests as the mouse moves. Don't worry, the
+<p>Below, observe six tests as the mouse moves. Don't worry, the
     one-second delay is part of the test:</p>
 </body>
 </html>

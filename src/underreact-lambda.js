@@ -67,9 +67,6 @@ function LambdaLangCode() {}
 LambdaLangCode.prototype.init = function () {
     return this;
 };
-LambdaLangCode.prototype.refineOutType = function ( outType ) {
-    return this;
-};
 
 var lambdaLang = {};
 
@@ -207,6 +204,44 @@ lambdaLang.delay = function ( delayMillis, body ) {
         return behSeqs(
             body.compile( varInfoByIndex, varInfoByName, midType ),
             behDelay( delayMillis, midType )
+        );
+    };
+    return result;
+};
+
+lambdaLang.times = function ( first, second ) {
+    var result = new LambdaLangCode().init();
+    result.getFreeVars = function () {
+        return first.getFreeVars().plus( second.getFreeVars() );
+    };
+    result.compile = function (
+        varInfoByIndex, varInfoByName, outType ) {
+        
+        if ( outType.op !== "times" )
+            throw new Error();
+        return behDupPar(
+            first.compile(
+                varInfoByIndex, varInfoByName, outType.first ),
+            second.compile(
+                varInfoByIndex, varInfoByName, outType.second )
+        );
+    };
+    return result;
+};
+
+lambdaLang.fst = function ( secondType, pair ) {
+    var result = new LambdaLangCode().init();
+    result.getFreeVars = function () {
+        return pair.getFreeVars();
+    };
+    result.compile = function (
+        varInfoByIndex, varInfoByName, outType ) {
+        
+        return behSeqs(
+            pair.compile(
+                varInfoByIndex, varInfoByName,
+                typeTimes( outType, secondType ) ),
+            behFst( outType, secondType )
         );
     };
     return result;

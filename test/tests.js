@@ -461,3 +461,121 @@ function makeTestForLambdaLang() {
     
     return { dom: dom };
 }
+
+function makeDelayers( arr ) {
+    if ( !(1 <= arr.length && arr.length <= 9) )
+        throw new Error();
+    return _.objAcc( function ( y ) {
+        _.arrEach( arr, function ( startMillis, i ) {
+            _.arrEach( arr.slice( i + 1 ), function ( endMillis, j ) {
+                var diffMillis = endMillis - startMillis;
+                if ( diffMillis <= 0 )
+                    throw new Error();
+                y( "t" + i + (i + j + 1), function ( type ) {
+                    // Delay a type from step i to step (i + j + 1).
+                    return typePlusOffsetMillis( diffMillis, type );
+                } );
+                y( "e" + i + (i + j + 1), function ( expr ) {
+                    // Delay a LambdaLangCode expression from step i
+                    // to step (i + j + 1).
+                    return lambdaLang.delay( diffMillis, expr );
+                } );
+            } );
+        } );
+    } );
+}
+
+function runLambdaLangConvenient( timeOffsetsMillis, env, body ) {
+    if ( "appActivity" in env )
+        throw new Error();
+    
+    timeOffsetsMillis = [ 0 ].concat( timeOffsetsMillis );
+    
+    var $ = lambdaLang;
+    var d = makeDelayers( timeOffsetsMillis );
+    var v = {};
+    
+    var harness = makeConvenientHarness();
+    
+    var envImpl = makeLambdaLangNameMap();
+    _.objOwnEach( env, function ( varName, entry ) {
+        envImpl.set( varName, behToCap( entry.beh ) );
+        var varInfo = {};
+        varInfo.v = $.va( varName );
+        _.arrEach( timeOffsetsMillis,
+            function ( timeOffsetMillis, i ) {
+            
+            varInfo[ "c" + i ] = function ( arg ) {
+                return $.call(
+                    $.delay( timeOffsetMillis, $.va( varName ) ),
+                    typePlusOffsetMillis(
+                        timeOffsetMillis, entry.earlyInputType ),
+                    arg );
+            };
+        } );
+        varInfo.c
+        v[ varName ] = varInfo;
+    } );
+    envImpl.set( "appActivity",
+        typeAtom( 0, harness.appActivityInSig ) );
+    v[ "appActivity" ] = { v: $.va( "appActivity" ) };
+    
+    var endMillis = timeOffsetsMillis[ timeOffsetsMillis.length - 1 ];
+    var endType = typeAtom( endMillis, harness.appActivityOutSig );
+    
+    runLambdaLang(
+        harness.context,
+        envImpl,
+        typeAtom( endMillis, harness.appActivityOutSig ),
+        _.arrFoldr(
+            _.acc( function ( y ) {
+                body( $, d, v, function ( var_args ) {
+                    _.arrEach( arguments, function ( expr ) {
+                        y( expr );
+                    } );
+                } );
+            } ),
+            $.delay( endMillis, v.appActivity.v ),
+            function ( agent, rest ) {
+                return $.fst( endType, $.times( agent, rest ) );
+            } )
+    );
+    harness.begin();
+}
+
+function makeTestForLambdaLangConvenient() {
+    
+    // NOTE: Although we delay the mouse-measurement demand by two
+    // seconds, we demand the measurement at the midpoint between our
+    // demand and the response, so we actually observe a delay of only
+    // half that interval.
+    var mouseDelayMillis = 2000;
+    var measurementDelayMillis = mouseDelayMillis / 2;
+    
+    var dom = null;
+    
+    var atom = typeAtom( 0, null );
+    
+    runLambdaLangConvenient( [
+        measurementDelayMillis,
+        mouseDelayMillis
+    ], {
+        mouse: {
+            earlyInputType: atom,
+            beh: behMouseQuery()
+        },
+        dom: {
+            earlyInputType: atom,
+            beh: behDomDiagnostic( function ( linkMetadata ) {
+                // TODO: This is awkward. If this capability is called
+                // twice, we'll end up with only one of the DOM
+                // elements. Should this use linear types?
+                dom = linkMetadata.dom;
+            } )
+        }
+    }, function ( $, d, v, addAgents ) { addAgents(
+        v.dom.c2( d.e12( v.mouse.c1( d.e01( v.appActivity.v ) ) ) )
+    ); } );
+    
+    return { dom: dom };
+}
