@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=UTF-8" />
+<title>Canvas using Underreact</title>
+<!-- canvas.html (part of Underreact) -->
+<!--
+
+The copyright and license information below applies to this file as an
+independent work. Other files commonly used or bundled with this one
+may have different authors and different posted licenses.
+
+-->
+<!--
+
+Copyright (c) 2012, Ross Angle
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+* Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+-->
+<meta name="viewport"
+    content="initial-scale = 1.0, maximum-scale = 1.0" />
+<style type="text/css">
+</style>
+
+<script type="text/javascript" src="../lib/lathe.js"></script>
+
+<script type="text/javascript">"use strict";
+var _ = rocketnia.lathe;
+</script>
+<script type="text/javascript" src="../src/underreact-async.js"
+    ></script>
+<script type="text/javascript" src="../src/underreact-behaviors.js"
+    ></script>
+<script type="text/javascript" src="../src/underreact-lambda.js"
+    ></script>
+<script type="text/javascript" src="tests.js"></script>
+<script type="text/javascript">"use strict";
+_.appendDom( window, { load: function () {
+    
+    var atom = typeAtom( 0, null );
+    
+    var rectsDeMon = behDemandMonitor( _.defer );
+    
+    var w = 200, h = 200;
+    var canvas = _.dom( "canvas", { width: "" + w, height: "" + h } );
+    var ctx = canvas.getContext( "2d" );
+    
+    function elPos( el ) {
+        // NOTE: This is loosely taken from an example at
+        // <http://www.kirupa.com/html5/get_element_position_using_javascript.htm>.
+        var x = 0, y = 0;
+        for ( var e = el; e !== null; e = e.offsetParent ) {
+            x += e.offsetLeft - e.scrollLeft + e.clientLeft;
+            y += e.offsetTop - e.scrollTop + e.clientTop;
+        }
+        return { x: x, y: y };
+    }
+    
+    runLambdaLangConvenient( [ 1 ], {
+        mouse: {
+            earlyInputType: atom,
+            beh: behMouseQuery()
+        },
+        showRect: {
+            earlyInputType: atom,
+            beh: rectsDeMon.demander
+        },
+        getShownRects: {
+            earlyInputType: atom,
+            beh: rectsDeMon.monitor
+        },
+        putRectsOnCanvas: {
+            earlyInputType: atom,
+            beh: behEventfulTarget( { onUpdate:
+                function ( maybeRects ) {
+                
+                ctx.fillStyle = "#000000";
+                ctx.fillRect( 0, 0, w, h );
+                if ( maybeRects === null )
+                    return;
+                ctx.fillStyle = "#FFFFFF";
+                _.arrEach( maybeRects.val, function ( rect ) {
+                    rect = JSON.parse( rect );
+                    ctx.fillRect(
+                        rect[ 0 ], rect[ 1 ], rect[ 2 ], rect[ 3 ] );
+                } );
+            } } )
+        }
+    }, function ( $, d, v, addAgents ) {
+        var a = v.appActivity.v;
+        function mouseToRect( mouse ) {
+            mouse = JSON.parse( mouse );
+            if ( mouse === null )
+                mouse = [ 0, 0 ];
+            var cPos = elPos( canvas );
+            mouse = [ mouse[ 0 ] - cPos.x, mouse[ 1 ] - cPos.y ];
+            return JSON.stringify(
+                [ mouse[ 0 ] - 10, mouse[ 1 ] - 10, 20, 20 ] );
+        }
+        addAgents(
+            d.e01( v.putRectsOnCanvas.c0( v.getShownRects.c0( a ) ) ),
+            $.fst( typeOne(),
+                $.times( d.e01( a ),
+                    v.showRect.c1(
+                        $.useBeh( behFmap( mouseToRect ),
+                            d.e01( v.mouse.c0( a ) ) ) ) ) ),
+            d.e01( a )
+        );
+    } );
+    
+    _.appendDom( document.body, canvas );
+} } );
+</script>
+</head>
+<body>
+<p>Below, observe a cursor-following demo. The delay is a known
+  issue:</p>
+</body>
+</html>

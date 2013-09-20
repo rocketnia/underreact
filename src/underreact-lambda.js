@@ -184,9 +184,37 @@ lambdaLang.beh = function ( beh ) {
         
         return behClosure( behSeqs(
             behSnd( typeOne(), typePlusOffsetMillis(
-                diff.offsetMillis, beh.inType ) ),
+                diff.offsetMillis !== null ? diff.offsetMillis : 0,
+                beh.inType ) ),
             beh
         ) );
+    };
+    return result;
+};
+
+lambdaLang.useBeh = function ( beh, argVal ) {
+    // TODO: See if we should take some kind of offsetMillis
+    // parameter, rather than using the behavior's own inType to
+    // determine the time offsets.
+    var result = new LambdaLangCode().init();
+    result.getFreeVars = function () {
+        return argVal.getFreeVars();
+    };
+    result.compile = function (
+        varInfoByIndex, varInfoByName, outType ) {
+        
+        var diff = typesUnify( outType, beh.outType );
+        if ( !diff )
+            throw new Error();
+        
+        return behSeqs(
+            argVal.compile( varInfoByIndex, varInfoByName,
+                typePlusOffsetMillis(
+                    diff.offsetMillis !== null ?
+                        diff.offsetMillis : 0,
+                    beh.inType ) ),
+            beh
+        );
     };
     return result;
 };

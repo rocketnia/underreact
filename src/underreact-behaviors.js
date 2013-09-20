@@ -61,6 +61,53 @@ function typeAnytimeFn( demand, response, leafInfo ) {
         demand: demand, response: response, leafInfo: leafInfo };
 }
 
+function typeIsStaticList( type ) {
+    var op = type.op;
+    if ( op === "atom" ) {
+        return false;
+    } else if ( op === "times" ) {
+        return typeIsStaticList( type.second );
+    } else if ( op === "one" ) {
+        return true;
+    } else if ( op === "plus" ) {
+        return false;
+    } else if ( op === "zero" ) {
+        return false;
+    } else if ( op === "anytimeFn" ) {
+        return false;
+    } else {
+        throw new Error();
+    }
+}
+
+function typeToString( type ) {
+    var op = type.op;
+    if ( op === "atom" ) {
+        return "A" + type.offsetMillis;
+    } else if ( op === "times" ) {
+        if ( typeIsStaticList( type ) ) {
+            var innerResults = [];
+            for ( var t = type; t.op === "times"; t = t.second )
+                innerResults.push( typeToString( t.first ) );
+            return "[ " + innerResults.join( ", " ) + " ]";
+        }
+        return "(" + typeToString( type.first ) + " * " +
+            typeToString( type.second ) + ")";
+    } else if ( op === "one" ) {
+        return "1";
+    } else if ( op === "plus" ) {
+        return "(" + typeToString( type.left ) + " + " +
+            typeToString( type.right ) + ")";
+    } else if ( op === "zero" ) {
+        return "0";
+    } else if ( op === "anytimeFn" ) {
+        return "(" + typeToString( type.demand ) + " -> " +
+            typeToString( type.response ) + ")";
+    } else {
+        throw new Error();
+    }
+}
+
 function typesAreEqual( offsetMillis, a, b ) {
     if ( !isValidDuration( offsetMillis ) )
         throw new Error();
@@ -143,7 +190,7 @@ function typesUnify( a, b ) {
 
 function getAllCoordinates( type ) {
     return _.acc( function ( y ) {
-        eachTypeLeafNode( type, function ( type ) {
+        eachTypeLeafNodeOver( type, function ( type ) {
             if ( type.op === "atom" ) {
                 y( { offsetMillis: type.offsetMillis } );
             } else if ( type.op === "anytimeFn" ) {
@@ -639,10 +686,10 @@ function consumeEarliestEntries( pendingHistories, body ) {
                 };
             }
         } );
-        var endMillis = _.arrFoldl( -1 / 0, earliestEntries,
+        var endMillis = _.arrFoldl( 1 / 0, earliestEntries,
             function ( endMillis, entry ) {
             
-            return Math.max( endMillis, entEnd( entry ) );
+            return Math.min( endMillis, entEnd( entry ) );
         } );
         _.arrEach( pendingHistories, function ( pending, i ) {
             var earliestEntry = earliestEntries[ i ];
@@ -2075,15 +2122,18 @@ function behDemandMonitor( defer ) {
                     } );
                     maybeData = { val: _.acc( function ( y ) {
                         _.arrEach( demandEntries, function ( entry ) {
-                            if ( set.has( entry ) )
+                            if ( entry.maybeData === null )
                                 return;
-                            set.set( entry, true );
-                            y( entry );
+                            var data = entry.maybeData.val;
+                            if ( set.has( data ) )
+                                return;
+                            set.set( data, true );
+                            y( data );
                         } );
                     } ) };
                 }
                 
-                outSig.addEntry( {
+                outSig.history.addEntry( {
                     maybeData: maybeData,
                     startMillis: monitorEntry.startMillis,
                     maybeEndMillis: monitorEntry.maybeEndMillis
@@ -2096,7 +2146,7 @@ function behDemandMonitor( defer ) {
                 var nextMonitorEntry =
                     monitorPending.getAllEntries()[ 0 ];
                 if ( nextMonitorEntry.maybeData === null ) {
-                    outSig.addEntry( nextMonitorEntry );
+                    outSig.history.addEntry( nextMonitorEntry );
                     consumedEndMillis = entEnd( nextMonitorEntry );
                     monitorPending.forgetBeforeMillis(
                         consumedEndMillis );
@@ -2111,13 +2161,13 @@ function behDemandMonitor( defer ) {
         }
         var monitorInfo = {
             demandersPending: null,
-            monitorPending: monitorPending,
             processPending: processPending
         };
         installedMonitors.push( monitorInfo );
         inSig.readEachEntry( function ( entry ) {
             monitorPending.addEntry( entry );
             defer( function () {
+                createDemandersPending();
                 processPending();
             } );
         } );
@@ -2288,7 +2338,7 @@ function behEventfulTarget( opts ) {
     return result;
 }
 
-function behMouseQuery( opts ) {
+function behMouseQuery() {
     return behEventfulSource( {
         apologyVal: JSON.stringify( null ),
         listenOnUpdate: function ( listener ) {

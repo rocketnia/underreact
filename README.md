@@ -15,18 +15,20 @@ RDP behaviors. This subset is an elegant system in itself, but its
 first-class behaviors are limited to a small, hardcoded library, and
 all its behaviors are limited to a single partition.
 
-For the time being, I've been doing tests using two ad hoc I/O
+Most of the time, I've been doing tests using two ad hoc I/O behaviors
 behaviors dedicated to very specific tasks:
 
 * Watch the mouse input.
 * Dump a signal to a DOM element for visualization as text.
 
-Now that your expectations are low enough, feel free to take a look at
-[some Underreact test code in
-action](http://rocketnia.github.io/underreact/test/tests.html).
+You can see these non-flashy tests here:
 
-At this point, Underreact has an implementation of demand monitors as
-well, but I haven't tested it yet.
+* [test/tests.html](http://rocketnia.github.io/underreact/test/tests.html).
+
+And now there's a slightly less ramshackle test here, which shows a
+box that follows the cursor:
+
+* [test/canvas.html](http://rocketnia.github.io/underreact/test/canvas.html).
 
 ### `behClosure()` and `behCall()`
 
