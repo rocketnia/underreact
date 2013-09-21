@@ -23,12 +23,12 @@ behaviors dedicated to very specific tasks:
 
 You can see these non-flashy tests here:
 
-* [test/tests.html](http://rocketnia.github.io/underreact/test/tests.html).
+* [test/tests.html](http://rocketnia.github.io/underreact/test/tests.html)
 
 And now there's a slightly less ramshackle test here, which shows a
 box that follows the cursor:
 
-* [test/canvas.html](http://rocketnia.github.io/underreact/test/canvas.html).
+* [test/canvas.html](http://rocketnia.github.io/underreact/test/canvas.html)
 
 ### `behClosure()` and `behCall()`
 
