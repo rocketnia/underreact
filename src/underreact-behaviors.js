@@ -2324,21 +2324,53 @@ function behEventfulTarget( opts ) {
         
         inSig.readEachEntry( function ( entry ) {
             outSig.history.addEntry( entry );
-            setTimeout( function () {
-                // In case the setTimeout calls get out of order,
+            
+            // TODO: Give Lathe.js a setTimeout equivalent which does
+            // this. The point is that setTimeout has a lower limit on
+            // its time interval, so Lathe.js's _.defer() might
+            // actually use a more responsive technique when the
+            // interval is small, such as postMessage, setImmediate,
+            // process.nextTick, or requestAnimationFrame.
+            //
+            // TODO: See if 10 ms is the right lower bound to use
+            // here.
+            //
+            // TODO: See if we should somehow protect against cases
+            // where _.defer( func ) actually fires sooner than we
+            // want it to.
+            //
+            function quickSetTimeout( millis, func ) {
+                if ( millis < 10 )
+                    _.defer( func );
+                else
+                    setTimeout( func, millis );
+            }
+            
+            quickSetTimeout( entry.startMillis - new Date().getTime(),
+                function () {
+                
+                // In case the quickSetTimeout calls get out of order,
                 // don't send this value.
                 if ( entry.startMillis < sentMillis )
                     return;
                 sentMillis = entry.startMillis;
                 
                 opts.onUpdate.call( {}, entry.maybeData );
-            }, entry.startMillis - new Date().getTime() );
+            } );
         } );
     };
     return result;
 }
 
-function behMouseQuery() {
+function behMouseQuery( opt_opts ) {
+    var opts = _.opt( opt_opts ).or( {
+        // TODO: Keep tuning these constants based on the interval
+        // frequency we actually achieve, rather than the one we shoot
+        // for.
+        interValMillis: 100,  // 10,
+        stabilityMillis: 500  // 200
+    } ).bam();
+    
     return behEventfulSource( {
         apologyVal: JSON.stringify( null ),
         listenOnUpdate: function ( listener ) {
@@ -2347,11 +2379,8 @@ function behMouseQuery() {
                     JSON.stringify( [ e.clientX, e.clientY ] ) );
             } } );
         },
-        // TODO: Keep tuning these constants based on the interval
-        // frequency we actually achieve, rather than the one we shoot
-        // for.
-        intervalMillis: 100,  // 10,
-        stabilityMillis: 500  // 200
+        intervalMillis: opts.intervalMillis,
+        stabilityMillis: opts.stabilityMillis
     } );
 }
 

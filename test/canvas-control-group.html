@@ -2,8 +2,8 @@
 <html>
 <head>
 <meta http-equiv="Content-Type" content="text/html;charset=UTF-8" />
-<title>Canvas using Underreact</title>
-<!-- canvas.html (part of Underreact) -->
+<title>Canvas not using Underreact</title>
+<!-- canvas-control-group.html (part of Underreact) -->
 <!--
 
 The copyright and license information below applies to this file as an
@@ -50,27 +50,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 <script type="text/javascript">"use strict";
 var _ = rocketnia.lathe;
 </script>
-<script type="text/javascript" src="../src/underreact-async.js"
-    ></script>
-<script type="text/javascript" src="../src/underreact-behaviors.js"
-    ></script>
-<script type="text/javascript" src="../src/underreact-lambda.js"
-    ></script>
-<script type="text/javascript" src="tests.js"></script>
 <script type="text/javascript">"use strict";
 _.appendDom( window, { load: function () {
     
-    var atom = typeAtom( 0, null );
-    
-    // TODO: Use something like this for Lathe.js's _.defer(). Right
-    // here we're non-modularly hacking it in (or rather we aren't,
-    // since right now the crucial line is commented out).
-    //
-    // TODO: Actually, see if we need this at all. This code is
-    // commented out, and it doesn't seem to make a difference.
-    //
-    // TODO: Test postMessage on various browsers.
-    //
+    // TODO: Use something like this for Lathe.js's _.defer().
     var customDeferredFuncs = [];
     var customDefer = function ( deferredFunc ) {
         customDeferredFuncs.push( deferredFunc );
@@ -82,10 +65,8 @@ _.appendDom( window, { load: function () {
             && customDeferredFuncs.length !== 0 )
             customDeferredFuncs.pop()();
     } } );
-//    _.defer = customDefer;
+    _.defer = customDefer;
     var customDefer = _.defer;
-    
-    var rectsDeMon = behDemandMonitor( customDefer );
     
     var w = 200, h = 200;
     var canvas = _.dom( "canvas", { width: "" + w, height: "" + h } );
@@ -102,9 +83,14 @@ _.appendDom( window, { load: function () {
         return { x: x, y: y };
     }
     
-    // TODO: Test requestAnimationFrame on various browsers. Some
-    // important browsers may not support it or may only support it
-    // under a prefix.
+    var rectTopLeft = { x: 0, y: 0 };
+    _.appendDom( window, { mousemove: function ( e ) {
+        rectTopLeft = { x: e.clientX - 10, y: e.clientY - 10 };
+        if ( !drawNecessary )
+            requestAnimationFrame( draw );
+        drawNecessary = true;
+    } } );
+    
     var latestMaybeRects = null;
     var drawNecessary = true;
     function draw() {
@@ -115,80 +101,20 @@ _.appendDom( window, { load: function () {
         
         ctx.fillStyle = "#000000";
         ctx.fillRect( 0, 0, w, h );
-        if ( latestMaybeRects === null )
-            return;
         ctx.fillStyle = "#FFFFFF";
         var cPos = elPos( canvas );
-        _.arrEach( latestMaybeRects.val, function ( rect ) {
-            rect = JSON.parse( rect );
-            ctx.fillRect(
-                rect[ 0 ] - cPos.x, rect[ 1 ] - cPos.y,
-                rect[ 2 ], rect[ 3 ] );
-        } );
+        ctx.fillRect(
+            rectTopLeft.x - cPos.x, rectTopLeft.y - cPos.y, 20, 20 );
     }
     requestAnimationFrame( draw );
-    
-    runLambdaLangConvenient( [ 1 ], {
-        mouse: {
-            earlyInputType: atom,
-            beh: behMouseQuery( {
-                intervalMillis: 1,
-                // NOTE: This setting makes the biggest difference for
-                // the responsiveness of the interface. At 10 ms, it's
-                // noticeably laggier than canvas-control-group.html.
-                // At 4 ms, it noticeably flickers due to all the gaps
-                // of inactivity.
-                // TODO: Since this is likely to have a slightly
-                // different optimal value depending on the 
-                stabilityMillis: 6
-            } )
-        },
-        showRect: {
-            earlyInputType: atom,
-            beh: rectsDeMon.demander
-        },
-        getShownRects: {
-            earlyInputType: atom,
-            beh: rectsDeMon.monitor
-        },
-        putRectsOnCanvas: {
-            earlyInputType: atom,
-            beh: behEventfulTarget( { onUpdate:
-                function ( maybeRects ) {
-                
-                latestMaybeRects = maybeRects;
-                if ( !drawNecessary )
-                    requestAnimationFrame( draw );
-                drawNecessary = true;
-            } } )
-        }
-    }, function ( $, d, v, addAgents ) {
-        var a = v.appActivity.v;
-        function mouseToRect( mouse ) {
-            mouse = JSON.parse( mouse );
-            if ( mouse === null )
-                mouse = [ 0, 0 ];
-            return JSON.stringify(
-                [ mouse[ 0 ] - 10, mouse[ 1 ] - 10, 20, 20 ] );
-        }
-        addAgents(
-            d.e01( v.putRectsOnCanvas.c0( v.getShownRects.c0( a ) ) ),
-            $.fst( typeOne(),
-                $.times( d.e01( a ),
-                    v.showRect.c1(
-                        $.useBeh( behFmap( mouseToRect ),
-                            d.e01( v.mouse.c0( a ) ) ) ) ) ),
-            d.e01( a )
-        );
-    } );
     
     _.appendDom( document.body, canvas );
 } } );
 </script>
 </head>
 <body>
-<h3>Canvas cursor demo (using Underreact)</h3>
-<p>Compare this to the <a href="canvas-control-group.html">hand-rolled
+<h3>Canvas cursor demo (hand-rolled)</h3>
+<p>Compare this to the <a href="canvas.html">Underreact
   version</a>.</p>
 <p>Ideally, both versions will keep the white box precisely under the
   mouse cursor at all times. Unfortunately, JavaScript events take
