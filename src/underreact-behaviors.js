@@ -2367,7 +2367,7 @@ function behMouseQuery( opt_opts ) {
         // TODO: Keep tuning these constants based on the interval
         // frequency we actually achieve, rather than the one we shoot
         // for.
-        interValMillis: 100,  // 10,
+        intervalMillis: 100,  // 10,
         stabilityMillis: 500  // 200
     } ).bam();
     
