@@ -475,7 +475,7 @@ function behSeq( behOne, behTwo ) {
     
     var result = {};
     result.inType = behOne.inType;
-    result.outType =
+    result.outType = diff.offsetMillis === null ? behTwo.outType :
         typePlusOffsetMillis( diff.offsetMillis, behTwo.outType );
     result.install = function ( context, inSigs, outSigs ) {
         var pairs =
@@ -2174,6 +2174,147 @@ function behDemandMonitor( defer ) {
     };
     
     return { demander: demander, monitor: monitor };
+}
+
+// NOTE: We use a defer procedure as a parameter here, so that
+// feedback loops don't grind the entire page to a halt. However,
+// those loops will still execute forever, so be careful.
+//
+// NOTE: This only supports JavaScript numbers as states. When
+// multiple rules apply at once, we choose the rule which leads to the
+// lowest state. If that still doesn't narrow it down, we choose the
+// rule with the lowest cooldown. If we need to choose a rule at the
+// same instant the ruleset is updating, we use the older ruleset.
+//
+// TODO: Implement resource spaces so that we can provide dynamic
+// acquisition of animated state resources while permitting external
+// observation and extensibility.
+//
+// TODO: This currently returns a demander behavior and a monitor
+// behavior. Return a resource control behavior of some sort as well.
+//
+function behAnimatedState( defer ) {
+    
+    var deMonIn = behDemandMonitor( defer );
+    var deMonOut = behDemandMonitor( defer );
+    
+    var currentVal = 0;
+    var nextUpdateMillis = -1 / 0;
+    
+    var updaterInternal = {};
+    updaterInternal.inType = typeAtom( 0, null );
+    updaterInternal.outType = typeAtom( 0, null );
+    updaterInternal.install = function ( context, inSigs, outSigs ) {
+        var inSig = inSigs.leafInfo;
+        var outSig = outSigs.leafInfo;
+        
+        inSig.readEachEntry( function ( entry ) {
+            function relyOnOtherDemanders() {
+                outSig.history.addEntry( {
+                    maybeData: { val: "" },
+                    startMillis: entry.startMillis,
+                    maybeEndMillis: entry.maybeEndMillis
+                } );
+            }
+            function doNothingMore() {
+                outSig.history.addEntry( {
+                    maybeData: { val: JSON.stringify( currentVal ) },
+                    startMillis: entry.startMillis,
+                    maybeEndMillis: entry.maybeEndMillis
+                } );
+            }
+            nextUpdateMillis =
+                Math.max( nextUpdateMillis, entry.startMillis );
+            if ( entEnd( entry ) < nextUpdateMillis )
+                return void relyOnOtherDemanders();
+            var rules = entry.maybeData === null ? [] :
+                _.arrMap( entry.maybeData.val,
+                    function ( ruleJson ) {
+                        // TODO: Validate each entry, and just filter
+                        // it out if it's invalid. Specifically, it
+                        // must be a three-element Array containing a
+                        // nonnegative fixint, a nonnegative fixint,
+                        // and a positive integer duration in
+                        // milliseconds.
+                        var rule = JSON.parse( ruleJson );
+                        return {
+                            oldVal: rule[ 0 ],
+                            newVal: rule[ 1 ],
+                            cooldownMillis: rule[ 2 ]
+                        };
+                    } );
+            while ( true ) {
+                if ( entEnd( entry ) < nextUpdateMillis )
+                    return void relyOnOtherDemanders();
+                var currentRules =
+                    _.arrKeep( rules, function ( rule ) {
+                        return rule.oldVal === currentVal;
+                    } );
+                if ( currentRules.length === 0 )
+                    return void doNothingMore();
+                var favoriteRule =
+                    currentRules.length === 0 ?
+                        {
+                            oldVal: currentVal,
+                            newVal: currentVal,
+                            cooldownMillis:
+                                entEnd( entry ) - nextUpdateMillis
+                        } :
+                        _.arrFoldl(
+                            currentRules[ 0 ],
+                            _.arrCut( currentRules, 1 ),
+                            function ( a, b ) {
+                                return a.newVal < b.newVal ? a :
+                                    b.newVal < a.newVal ? b :
+                                    a.cooldownMillis <
+                                        b.cooldownMillis ? a :
+                                    b;
+                            } );
+                
+                var prevUpdateMillis = nextUpdateMillis;
+                
+                currentVal = favoriteRule.newVal;
+                nextUpdateMillis += favoriteRule.cooldownMillis;
+                
+                outSig.history.addEntry( {
+                    maybeData: { val: JSON.stringify( currentVal ) },
+                    startMillis: prevUpdateMillis,
+                    maybeEndMillis: { val: nextUpdateMillis }
+                } );
+            }
+        } );
+    };
+    
+    var updater = behSeqs(
+        behFmap( function ( val ) {
+            return [];
+        } ),
+        deMonIn.monitor,
+        updaterInternal,
+        deMonOut.demander
+    );
+    
+    var result = {};
+    result.demander = behSeqs(
+        behDupPar( updater, deMonIn.demander ),
+        behSnd( typeOne(), typeOne() )
+    );
+    result.monitor = behSeqs(
+        behDupPar( updater, behSeqs(
+            deMonOut.monitor,
+            behFmap( function ( responses ) {
+                var filteredResponses =
+                    _.arrKeep( responses, function ( it ) {
+                        return it !== "";
+                    } );
+                if ( filteredResponses.length !== 1 )
+                    throw new Error();
+                return filteredResponses[ 0 ];
+            } )
+        ) ),
+        behSnd( typeOne(), typeAtom( 0, null ) )
+    );
+    return result;
 }
 
 // TODO: Implement some additional axiomatic operations like these

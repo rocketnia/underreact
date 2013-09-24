@@ -30,6 +30,11 @@ box that follows the cursor:
 
 * [test/canvas.html](http://rocketnia.github.io/underreact/test/canvas.html)
 
+Last but not least, here's an upgrade of that test with a basic
+demonstration of [animated reactive state transition](http://awelonblue.wordpress.com/2011/10/11/animated-reactive-state/):
+
+* [test/canvas-fancy.html](http://rocketnia.github.io/underreact/test/canvas-fancy.html)
+
 ### `behClosure()` and `behCall()`
 
 Underreact does not yet have Sirea's `beval` for dynamic behaviors,

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=UTF-8" />
+<title>Fancy canvas using Underreact</title>
+<!-- canvas-fancy.html (part of Underreact) -->
+<!--
+
+The copyright and license information below applies to this file as an
+independent work. Other files commonly used or bundled with this one
+may have different authors and different posted licenses.
+
+-->
+<!--
+
+Copyright (c) 2012, Ross Angle
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+* Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+-->
+<meta name="viewport"
+    content="initial-scale = 1.0, maximum-scale = 1.0" />
+<style type="text/css">
+</style>
+
+<script type="text/javascript" src="../lib/lathe.js"></script>
+
+<script type="text/javascript">"use strict";
+var _ = rocketnia.lathe;
+</script>
+<script type="text/javascript" src="../src/underreact-async.js"
+    ></script>
+<script type="text/javascript" src="../src/underreact-behaviors.js"
+    ></script>
+<script type="text/javascript" src="../src/underreact-lambda.js"
+    ></script>
+<script type="text/javascript" src="tests.js"></script>
+<script type="text/javascript">"use strict";
+_.appendDom( window, { load: function () {
+    
+    var atom = typeAtom( 0, null );
+    
+    // TODO: Use something like this for Lathe.js's _.defer(). Right
+    // here we're non-modularly hacking it in (or rather we aren't,
+    // since right now the crucial line is commented out).
+    //
+    // TODO: Actually, see if we need this at all. This code is
+    // commented out, and it doesn't seem to make a difference.
+    //
+    // TODO: Test postMessage on various browsers.
+    //
+    var customDeferredFuncs = [];
+    var customDefer = function ( deferredFunc ) {
+        customDeferredFuncs.push( deferredFunc );
+        postMessage( "customDefer", "*" );
+    };
+    _.appendDom( window, { message: function ( e ) {
+        if ( e.source === window
+            && e.data === "customDefer"
+            && customDeferredFuncs.length !== 0 )
+            customDeferredFuncs.pop()();
+    } } );
+//    _.defer = customDefer;
+    var customDefer = _.defer;
+    
+    var rectsDeMon = behDemandMonitor( customDefer );
+    var testAnimatedState = behAnimatedState( customDefer );
+    
+    var w = 200, h = 200;
+    var canvas = _.dom( "canvas", { width: "" + w, height: "" + h } );
+    var ctx = canvas.getContext( "2d" );
+    
+    function elPos( el ) {
+        // NOTE: This is loosely taken from an example at
+        // <http://www.kirupa.com/html5/get_element_position_using_javascript.htm>.
+        var x = 0, y = 0;
+        for ( var e = el; e !== null; e = e.offsetParent ) {
+            x += e.offsetLeft - e.scrollLeft + e.clientLeft;
+            y += e.offsetTop - e.scrollTop + e.clientTop;
+        }
+        return { x: x, y: y };
+    }
+    
+    // TODO: Test requestAnimationFrame on various browsers. Some
+    // important browsers may not support it or may only support it
+    // under a prefix.
+    var latestMaybeRects = null;
+    var drawNecessary = true;
+    function draw() {
+        if ( !drawNecessary )
+            return;
+        
+        drawNecessary = false;
+        
+        ctx.fillStyle = "#000000";
+        ctx.fillRect( 0, 0, w, h );
+        if ( latestMaybeRects === null )
+            return;
+        ctx.fillStyle = "#FFFFFF";
+        var cPos = elPos( canvas );
+        _.arrEach( latestMaybeRects.val, function ( rect ) {
+            rect = JSON.parse( rect );
+            ctx.fillRect(
+                rect[ 0 ] - cPos.x, rect[ 1 ] - cPos.y,
+                rect[ 2 ], rect[ 3 ] );
+        } );
+    }
+    requestAnimationFrame( draw );
+    
+    runLambdaLangConvenient( [ 1 ], {
+        mouse: {
+            earlyInputType: atom,
+            beh: behMouseQuery( {
+                intervalMillis: 1,
+                // NOTE: This setting makes the biggest difference for
+                // the responsiveness of the interface. At 10 ms, it's
+                // noticeably laggier than canvas-control-group.html.
+                // At 4 ms, it noticeably flickers due to all the gaps
+                // of inactivity.
+                // TODO: Since this is likely to have a slightly
+                // different optimal value depending on the 
+                stabilityMillis: 6
+            } )
+        },
+        showRect: {
+            earlyInputType: atom,
+            beh: rectsDeMon.demander
+        },
+        getShownRects: {
+            earlyInputType: atom,
+            beh: rectsDeMon.monitor
+        },
+        putAnimatedRule: {
+            earlyInputType: atom,
+            beh: testAnimatedState.demander
+        },
+        getAnimatedState: {
+            earlyInputType: atom,
+            beh: testAnimatedState.monitor
+        },
+        putRectsOnCanvas: {
+            earlyInputType: atom,
+            beh: behEventfulTarget( { onUpdate:
+                function ( maybeRects ) {
+                
+                latestMaybeRects = maybeRects;
+                if ( !drawNecessary )
+                    requestAnimationFrame( draw );
+                drawNecessary = true;
+            } } )
+        }
+    }, function ( $, d, v, addAgents ) {
+        var a = v.appActivity.v;
+        function mouseToRect( mouse ) {
+            mouse = JSON.parse( mouse );
+            if ( mouse === null )
+                mouse = [ 0, 0 ];
+            return JSON.stringify(
+                [ mouse[ 0 ] - 10, mouse[ 1 ] - 10, 20, 20 ] );
+        }
+        function animStateToRect( animState ) {
+            return JSON.stringify(
+                [ 80 + (animState * 20), 150, 5, 5 ] );
+        }
+        function from1( a, expr ) {
+            return $.fst( typeOne(), $.times( a, expr ) );
+        }
+        function usef( func, expr ) {
+            return $.useBeh( behFmap( func ), expr );
+        }
+        function k( val ) {
+            return usef( _.kfn( JSON.stringify( val ) ), a );
+        }
+        addAgents(
+            d.e01( v.putRectsOnCanvas.c0( v.getShownRects.c0( a ) ) ),
+            d.e01(
+                from1( a,
+                    v.showRect.c0( k( [ 130, 180, 5, 5 ] ) ) ) ),
+            from1( d.e01( a ),
+                v.showRect.c1(
+                    usef( mouseToRect, d.e01( v.mouse.c0( a ) ) ) ) ),
+            d.e01(
+                from1( a,
+                    v.putAnimatedRule.c0( k( [ 0, 1, 300 ] ) ) ) ),
+            d.e01(
+                from1( a,
+                    v.putAnimatedRule.c0( k( [ 1, 2, 300 ] ) ) ) ),
+            d.e01(
+                from1( a,
+                    v.putAnimatedRule.c0( k( [ 2, 0, 300 ] ) ) ) ),
+            d.e01(
+                from1( a,
+                    v.showRect.c0(
+                        usef( animStateToRect,
+                            v.getAnimatedState.c0( a ) ) ) ) ),
+            d.e01( a )
+        );
+    } );
+    
+    _.appendDom( _.el( "demo" ), canvas );
+} } );
+</script>
+</head>
+<body>
+<h3>Fancy canvas cursor demo</h3>
+<!-- TODO: Come up with a better title for this demo. -->
+<div id="demo"></div>
+<p>Above, observe a box that follows the cursor, a dot that doesn't
+  follow the cursor, and a dot that moves to the beat of its own
+  drummer.</p>
+<p>Right now, these are actually rendered in locations that are
+  relative to the window's viewport. The canvas itself may appear in
+  the wrong place for you to see the boxes, depending on your browser
+  fonts, user stylesheets, text wrapping, scroll position, and maybe
+  even zoom level.<p>
+</body>
+</html>
