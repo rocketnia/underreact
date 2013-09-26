@@ -76,6 +76,9 @@ lambdaLang.va = function ( name ) {
     name += "";
     
     var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "$" + name;
+    };
     result.getFreeVars = function () {
         var freeVars = makeLambdaLangNameMap();
         freeVars.set( name, true );
@@ -84,10 +87,10 @@ lambdaLang.va = function ( name ) {
     result.compile = function (
         varInfoByIndex, varInfoByName, outType ) {
         
-        var remainingEnvType = _.arrFoldr( varInfoByIndex, typeOne(),
-            function ( varInfo, rest ) {
-                return typeTimes( varInfo.type, rest );
-            } );
+        // TODO: See if we can change this to a simple behFst, now
+        // that we only get our own free variables in the environment.
+        var remainingEnvType =
+            lambdaLangVarInfoByIndexToType( varInfoByIndex );
         var seq = [];
         for ( var i = varInfoByName.get( name ).index; 0 < i; i-- ) {
             seq.push( behSnd(
@@ -101,6 +104,14 @@ lambdaLang.va = function ( name ) {
     return result;
 };
 
+function lambdaLangVarInfoByIndexToType( varInfoByIndex ) {
+    return _.arrFoldr( varInfoByIndex, typeOne(),
+        function ( varInfo, rest ) {
+        
+        return typeTimes( varInfo.type, rest );
+    } );
+}
+
 lambdaLang.fn = function ( argName, body ) {
     if ( !_.isString( argName ) )
         throw new Error();
@@ -109,6 +120,9 @@ lambdaLang.fn = function ( argName, body ) {
         throw new Error();
     
     var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "\$" + argName + " -> " + body.toString();
+    };
     result.getFreeVars = function () {
         var freeVars = body.getFreeVars().copy();
         freeVars.del( name );
@@ -132,12 +146,7 @@ lambdaLang.fn = function ( argName, body ) {
             argName, { index: 0, type: argType } );
         
         return behClosure( behSeqs(
-            behSwap(
-                _.arrFoldr( varInfoByIndex, typeOne(),
-                    function ( varInfo, rest ) {
-                    
-                    return typeTimes( varInfo.type, rest );
-                } ),
+            behSwap( lambdaLangVarInfoByIndexToType( varInfoByIndex ),
                 argType ),
             body.compile( innerVarInfoByIndex, innerVarInfoByName,
                 innerOutType )
@@ -146,8 +155,58 @@ lambdaLang.fn = function ( argName, body ) {
     return result;
 };
 
+function behLambdaLangFilter( origVarInfoByIndex, expr, outType ) {
+    var finalFreeVars = expr.getFreeVars();
+    var almostResult = _.arrFoldr( origVarInfoByIndex, {
+        varTypeBefore: typeOne(),
+        varInfoByIndexAfter: [],
+        beh: behId( typeOne() )
+    }, function ( varInfo, r ) {
+        
+        return finalFreeVars.has( varInfo.name ) ? {
+            varTypeBefore: typeTimes( varInfo.type, r.varTypeBefore ),
+            varInfoByIndexAfter:
+                [ varInfo ].concat( r.varInfoByIndexAfter ),
+            beh: behPar( behId( varInfo.type ), r.beh )
+        } : {
+            varTypeBefore: typeTimes( varInfo.type, r.varTypeBefore ),
+            varInfoByIndexAfter: r.varInfoByIndexAfter,
+            beh: behSeqs(
+                behSnd( varInfo.type, r.varTypeBefore ),
+                r.beh
+            )
+        };
+    } );
+    var varInfoByName = makeLambdaLangNameMap();
+    _.arrEach( almostResult.varInfoByIndexAfter, function ( varInfo, i ) {
+        varInfoByName.set(
+            varInfo.name, { type: varInfo.type, index: i } );
+    } );
+    return behSeqs(
+        almostResult.beh,
+        expr.compile(
+            almostResult.varInfoByIndexAfter, varInfoByName, outType )
+    );
+}
+
+function behDupParLambdaLang( varInfoByIndex,
+    firstExpr, firstOutType, secondExpr, secondOutType ) {
+    
+    return behDupPar(
+        behLambdaLangFilter(
+            varInfoByIndex, firstExpr, firstOutType ),
+        behLambdaLangFilter(
+            varInfoByIndex, secondExpr, secondOutType )
+    );
+}
+
 lambdaLang.call = function ( op, argType, argVal ) {
     var result = new LambdaLangCode().init();
+    result.toString = function () {
+//        return "(" + op.toString() + " " +
+//            typeToString( argType ) + " " + argVal.toString() + ")";
+        return "(" + op.toString() + " " + argVal.toString() + ")";
+    };
     result.getFreeVars = function () {
         return op.getFreeVars().plus( argVal.getFreeVars() );
     };
@@ -156,11 +215,8 @@ lambdaLang.call = function ( op, argType, argVal ) {
         
         var opType = typeAnytimeFn( argType, outType, null );
         return behSeqs(
-            behDupPar(
-                op.compile( varInfoByIndex, varInfoByName, opType ),
-                argVal.compile(
-                    varInfoByIndex, varInfoByName, argType )
-            ),
+            behDupParLambdaLang(
+                varInfoByIndex, op, opType, argVal, argType ),
             behCall( opType )
         );
     };
@@ -172,6 +228,10 @@ lambdaLang.beh = function ( beh ) {
     // parameter, rather than using the behavior's own inType to
     // determine the time offsets.
     var result = new LambdaLangCode().init();
+    result.toString = function () {
+        // TODO: See if this can be more informative.
+        return "#<beh:" + beh + ">";
+    };
     result.getFreeVars = function () {
         return makeLambdaLangNameMap();
     };
@@ -197,6 +257,10 @@ lambdaLang.useBeh = function ( beh, argVal ) {
     // parameter, rather than using the behavior's own inType to
     // determine the time offsets.
     var result = new LambdaLangCode().init();
+    result.toString = function () {
+        // TODO: See if this can be more informative.
+        return "#<useBeh:" + beh + "> " + argVal.toString();
+    };
     result.getFreeVars = function () {
         return argVal.getFreeVars();
     };
@@ -220,7 +284,12 @@ lambdaLang.useBeh = function ( beh, argVal ) {
 };
 
 lambdaLang.delay = function ( delayMillis, body ) {
+    if ( !isValidDuration( delayMillis ) )
+        throw new Error();
     var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "#<delay:" + delayMillis + "> " + body.toString();
+    };
     result.getFreeVars = function () {
         return body.getFreeVars();
     };
@@ -239,6 +308,9 @@ lambdaLang.delay = function ( delayMillis, body ) {
 
 lambdaLang.one = function () {
     var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "1";
+    };
     result.getFreeVars = function () {
         return makeLambdaLangNameMap();
     };
@@ -247,17 +319,21 @@ lambdaLang.one = function () {
         
         if ( outType.op !== "one" )
             throw new Error();
-        return behDrop( _.arrFoldr( varInfoByIndex, typeOne(),
-            function ( varInfo, rest ) {
-            
-            return typeTimes( varInfo.type, rest );
-        } ) );
+        // TODO: See if we can replace this as follows, since we no
+        // longer get more variables in scope than we need.
+//        return behDrop( typeZero() );
+        return behDrop(
+            lambdaLangVarInfoByIndexToType( varInfoByIndex ) );
     };
     return result;
 };
 
 lambdaLang.times = function ( first, second ) {
     var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "(" + first.toString() + " * " +
+            second.toString() + ")";
+    };
     result.getFreeVars = function () {
         return first.getFreeVars().plus( second.getFreeVars() );
     };
@@ -266,18 +342,17 @@ lambdaLang.times = function ( first, second ) {
         
         if ( outType.op !== "times" )
             throw new Error();
-        return behDupPar(
-            first.compile(
-                varInfoByIndex, varInfoByName, outType.first ),
-            second.compile(
-                varInfoByIndex, varInfoByName, outType.second )
-        );
+        return behDupParLambdaLang( varInfoByIndex,
+            first, outType.first, second, outType.second );
     };
     return result;
 };
 
 lambdaLang.fst = function ( secondType, pair ) {
     var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "#fst " + pair.toString();
+    };
     result.getFreeVars = function () {
         return pair.getFreeVars();
     };

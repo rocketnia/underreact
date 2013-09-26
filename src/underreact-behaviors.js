@@ -2237,25 +2237,42 @@ function behAnimatedState( defer ) {
                         // and a positive integer duration in
                         // milliseconds.
                         var rule = JSON.parse( ruleJson );
-                        return {
-                            oldVal: rule[ 0 ],
-                            newVal: rule[ 1 ],
-                            cooldownMillis: rule[ 2 ]
-                        };
+                        if ( rule[ 0 ] === "replace" )
+                            return function ( oldVal ) {
+                                if ( oldVal !== rule[ 1 ] )
+                                    return null;
+                                return {
+                                    newVal: rule[ 2 ],
+                                    cooldownMillis: rule[ 3 ]
+                                };
+                            };
+                        else if ( rule[ 0 ] === "rangeAdd" )
+                            return function ( oldVal ) {
+                                if ( !(rule[ 1 ] <= oldVal
+                                    && oldVal <= rule[ 2 ]) )
+                                    return null;
+                                return {
+                                    newVal: oldVal + rule[ 3 ],
+                                    cooldownMillis: rule[ 4 ]
+                                };
+                            };
+                        else
+                            throw new Error();
                     } );
             while ( true ) {
                 if ( entEnd( entry ) < nextUpdateMillis )
                     return void relyOnOtherDemanders();
                 var currentRules =
-                    _.arrKeep( rules, function ( rule ) {
-                        return rule.oldVal === currentVal;
+                    _.arrMappend( rules, function ( rule ) {
+                        var replacement = rule( currentVal );
+                        return replacement === null ? [] :
+                            [ replacement ];
                     } );
                 if ( currentRules.length === 0 )
                     return void doNothingMore();
                 var favoriteRule =
                     currentRules.length === 0 ?
                         {
-                            oldVal: currentVal,
                             newVal: currentVal,
                             cooldownMillis:
                                 entEnd( entry ) - nextUpdateMillis

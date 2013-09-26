@@ -202,9 +202,9 @@ _.appendDom( window, { load: function () {
                     20, 20 ];
             }, d.e01( v.mouse.c0( a ) ) ) ),
             v.showRect.c0( k( [ 130, 180, 5, 5 ] ) ),
-            v.putAnimatedRule.c0( k( [ 0, 1, 300 ] ) ),
-            v.putAnimatedRule.c0( k( [ 1, 2, 300 ] ) ),
-            v.putAnimatedRule.c0( k( [ 2, 0, 300 ] ) ),
+            v.putAnimatedRule.c0( k( [ "replace", 0, 1, 300 ] ) ),
+            v.putAnimatedRule.c0( k( [ "replace", 1, 2, 300 ] ) ),
+            v.putAnimatedRule.c0( k( [ "replace", 2, 0, 300 ] ) ),
             v.showRect.c0( usejf( function ( animState ) {
                 return [ 80 + (animState * 20), 150, 5, 5 ];
             }, v.getAnimatedState.c0( a ) ) ),
