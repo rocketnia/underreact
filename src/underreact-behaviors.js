@@ -2456,15 +2456,13 @@ function behEventfulTarget( opts ) {
     
     var result = {};
     result.inType = typeAtom( 0, null );
-    result.outType = typeAtom( 0, null );
+    result.outType = typeOne();
     result.install = function ( context, inSigs, outSigs ) {
         var inSig = inSigs.leafInfo;
-        var outSig = outSigs.leafInfo;
         
         var sentMillis = -1 / 0;
         
         inSig.readEachEntry( function ( entry ) {
-            outSig.history.addEntry( entry );
             
             // TODO: Give Lathe.js a setTimeout equivalent which does
             // this. The point is that setTimeout has a lower limit on
@@ -2503,6 +2501,13 @@ function behEventfulTarget( opts ) {
     return result;
 }
 
+function behEventfulTargetNoDrop( opts ) {
+    return behSeqs(
+        behDupPar( behId( typeAtom( 0, null ) ), behEventfulTarget( opts ) ),
+        behFst( typeAtom( 0, null ), typeOne() )
+    );
+}
+
 function behMouseQuery( opt_opts ) {
     var opts = _.opt( opt_opts ).or( {
         // TODO: Keep tuning these constants based on the interval
@@ -2528,7 +2533,9 @@ function behMouseQuery( opt_opts ) {
 function behDomDiagnostic( syncOnLinkMetadata ) {
     var display = _.dom( "div", JSON.stringify( null ) );
     syncOnLinkMetadata( { dom: display } );
-    return behEventfulTarget( { onUpdate: function ( newMaybeVal ) {
-        _.dom( display, JSON.stringify( newMaybeVal ) );
-    } } );
+    return behEventfulTargetNoDrop( {
+        onUpdate: function ( newMaybeVal ) {
+            _.dom( display, JSON.stringify( newMaybeVal ) );
+        }
+    } );
 }

@@ -237,6 +237,25 @@ lambdaLang.delay = function ( delayMillis, body ) {
     return result;
 };
 
+lambdaLang.one = function () {
+    var result = new LambdaLangCode().init();
+    result.getFreeVars = function () {
+        return makeLambdaLangNameMap();
+    };
+    result.compile = function (
+        varInfoByIndex, varInfoByName, outType ) {
+        
+        if ( outType.op !== "one" )
+            throw new Error();
+        return behDrop( _.arrFoldr( varInfoByIndex, typeOne(),
+            function ( varInfo, rest ) {
+            
+            return typeTimes( varInfo.type, rest );
+        } ) );
+    };
+    return result;
+};
+
 lambdaLang.times = function ( first, second ) {
     var result = new LambdaLangCode().init();
     result.getFreeVars = function () {

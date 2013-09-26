@@ -164,21 +164,32 @@ _.appendDom( window, { load: function () {
         }
     }, function ( $, d, v, addAgents ) {
         var a = v.appActivity.v;
-        function mouseToRect( mouse ) {
-            mouse = JSON.parse( mouse );
-            if ( mouse === null )
-                mouse = [ 0, 0 ];
-            return JSON.stringify(
-                [ mouse[ 0 ] - 10, mouse[ 1 ] - 10, 20, 20 ] );
+        function from1( a, expr ) {
+            return $.fst( typeOne(), $.times( a, expr ) );
         }
-        addAgents(
-            d.e01( v.putRectsOnCanvas.c0( v.getShownRects.c0( a ) ) ),
-            $.fst( typeOne(),
-                $.times( d.e01( a ),
-                    v.showRect.c1(
-                        $.useBeh( behFmap( mouseToRect ),
-                            d.e01( v.mouse.c0( a ) ) ) ) ) ),
-            d.e01( a )
+        function usef( func, expr ) {
+            return $.useBeh( behFmap( func ), expr );
+        }
+        function usejf( func, expr ) {
+            return usef( function ( input ) {
+                return JSON.stringify( func( JSON.parse( input ) ) );
+            }, expr );
+        }
+        function addVoidAgents( var_args ) {
+            addAgents.apply( {},
+                _.arrMap( arguments, function ( expr ) {
+                    return d.e01( from1( a, expr ) );
+                } ) );
+        }
+        addVoidAgents(
+            v.putRectsOnCanvas.c0( v.getShownRects.c0( a ) ),
+            v.showRect.c1( usejf( function ( mouse ) {
+                if ( mouse === null )
+                    mouse = [ 0, 0 ];
+                return [ mouse[ 0 ] - 10, mouse[ 1 ] - 10,
+                    20, 20 ];
+            }, d.e01( v.mouse.c0( a ) ) ) ),
+            $.one()
         );
     } );
     
