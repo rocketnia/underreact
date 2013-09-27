@@ -2230,12 +2230,25 @@ function behAnimatedState( defer ) {
             var rules = entry.maybeData === null ? [] :
                 _.arrMap( entry.maybeData.val,
                     function ( ruleJson ) {
+                        
                         // TODO: Validate each entry, and just filter
                         // it out if it's invalid. Specifically, it
-                        // must be a three-element Array containing a
-                        // nonnegative fixint, a nonnegative fixint,
-                        // and a positive integer duration in
-                        // milliseconds.
+                        // must be one of the following:
+                        //
+                        // - A four-element Array containing the
+                        //   string "replace", a nonnegative fixint, a
+                        //   nonnegative fixint, and a positive
+                        //   integer duration in milliseconds.
+                        //
+                        // - A five-element Array containing the
+                        //   string "rangeAdd", a nonnegative fixint
+                        //   lower bound (inclusive), a nonnegative
+                        //   fixint upper bound (inclusive), a signed
+                        //   fixint which can be added to any fixint
+                        //   in that range without overflowing (or
+                        //   going negative), and a positive integer
+                        //   duration in milliseconds.
+                        
                         var rule = JSON.parse( ruleJson );
                         if ( rule[ 0 ] === "replace" )
                             return function ( oldVal ) {
