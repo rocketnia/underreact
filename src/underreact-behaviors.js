@@ -2232,48 +2232,47 @@ function behAnimatedState( defer ) {
             var rules = entry.maybeData === null ? [] :
                 _.arrMap( entry.maybeData.val,
                     function ( ruleJson ) {
-                        
-                        // TODO: Validate each entry, and just filter
-                        // it out if it's invalid. Specifically, it
-                        // must be one of the following:
-                        //
-                        // - A four-element Array containing the
-                        //   string "replace", a nonnegative fixint, a
-                        //   nonnegative fixint, and a positive
-                        //   integer duration in milliseconds.
-                        //
-                        // - A five-element Array containing the
-                        //   string "rangeAdd", a nonnegative fixint
-                        //   lower bound (inclusive), a nonnegative
-                        //   fixint upper bound (inclusive), a signed
-                        //   fixint which can be added to any fixint
-                        //   in that range without overflowing (or
-                        //   going negative), and a positive integer
-                        //   duration in milliseconds.
-                        
-                        var rule = JSON.parse( ruleJson );
-                        if ( rule[ 0 ] === "replace" )
-                            return function ( oldVal ) {
-                                if ( oldVal !== rule[ 1 ] )
-                                    return null;
-                                return {
-                                    newVal: rule[ 2 ],
-                                    cooldownMillis: rule[ 3 ]
-                                };
+                    
+                    // TODO: Validate each entry, and just filter it
+                    // out if it's invalid. Specifically, it must be
+                    // one of the following:
+                    //
+                    // - A four-element Array containing the string
+                    //   "replace", a nonnegative fixint, a
+                    //   nonnegative fixint, and a positive integer
+                    //   duration in milliseconds.
+                    //
+                    // - A five-element Array containing the string
+                    //   "rangeAdd", a nonnegative fixint lower bound
+                    //   (inclusive), a nonnegative fixint upper bound
+                    //   (inclusive), a signed fixint which can be
+                    //   added to any fixint in that range without
+                    //   overflowing (or going negative), and a
+                    //   positive integer duration in milliseconds.
+                    
+                    var rule = JSON.parse( ruleJson );
+                    if ( rule[ 0 ] === "replace" )
+                        return function ( oldVal ) {
+                            if ( oldVal !== rule[ 1 ] )
+                                return null;
+                            return {
+                                newVal: rule[ 2 ],
+                                cooldownMillis: rule[ 3 ]
                             };
-                        else if ( rule[ 0 ] === "rangeAdd" )
-                            return function ( oldVal ) {
-                                if ( !(rule[ 1 ] <= oldVal
-                                    && oldVal <= rule[ 2 ]) )
-                                    return null;
-                                return {
-                                    newVal: oldVal + rule[ 3 ],
-                                    cooldownMillis: rule[ 4 ]
-                                };
+                        };
+                    else if ( rule[ 0 ] === "rangeAdd" )
+                        return function ( oldVal ) {
+                            if ( !(rule[ 1 ] <= oldVal
+                                && oldVal <= rule[ 2 ]) )
+                                return null;
+                            return {
+                                newVal: oldVal + rule[ 3 ],
+                                cooldownMillis: rule[ 4 ]
                             };
-                        else
-                            throw new Error();
-                    } );
+                        };
+                    else
+                        throw new Error();
+                } );
             while ( true ) {
                 if ( entEnd( entry ) < nextUpdateMillis )
                     return void relyOnOtherDemanders();
