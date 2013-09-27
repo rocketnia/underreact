@@ -2216,17 +2216,19 @@ function behAnimatedState( defer ) {
                     maybeEndMillis: entry.maybeEndMillis
                 } );
             }
-            function doNothingMore() {
-                outSig.history.addEntry( {
-                    maybeData: { val: JSON.stringify( currentVal ) },
-                    startMillis: entry.startMillis,
-                    maybeEndMillis: entry.maybeEndMillis
-                } );
-            }
-            nextUpdateMillis =
-                Math.max( nextUpdateMillis, entry.startMillis );
+            
             if ( entEnd( entry ) < nextUpdateMillis )
                 return void relyOnOtherDemanders();
+            
+            if ( entry.startMillis < nextUpdateMillis )
+                outSig.history.addEntry( {
+                    maybeData: { val: "" },
+                    startMillis: entry.startMillis,
+                    maybeEndMillis: { val: nextUpdateMillis }
+                } );
+            else
+                nextUpdateMillis = entry.startMillis;
+            
             var rules = entry.maybeData === null ? [] :
                 _.arrMap( entry.maybeData.val,
                     function ( ruleJson ) {
@@ -2281,25 +2283,29 @@ function behAnimatedState( defer ) {
                         return replacement === null ? [] :
                             [ replacement ];
                     } );
-                if ( currentRules.length === 0 )
-                    return void doNothingMore();
-                var favoriteRule =
-                    currentRules.length === 0 ?
-                        {
-                            newVal: currentVal,
-                            cooldownMillis:
-                                entEnd( entry ) - nextUpdateMillis
-                        } :
-                        _.arrFoldl(
-                            currentRules[ 0 ],
-                            _.arrCut( currentRules, 1 ),
-                            function ( a, b ) {
-                                return a.newVal < b.newVal ? a :
-                                    b.newVal < a.newVal ? b :
-                                    a.cooldownMillis <
-                                        b.cooldownMillis ? a :
-                                    b;
-                            } );
+                
+                if ( currentRules.length === 0 ) {
+                    nextUpdateMillis =
+                        Math.max( nextUpdateMillis, entEnd( entry ) );
+                    outSig.history.addEntry( {
+                        maybeData:
+                            entry.maybeEndMillis === null ? null :
+                                { val: JSON.stringify( currentVal ) },
+                        startMillis: entry.startMillis,
+                        maybeEndMillis: entry.maybeEndMillis
+                    } );
+                    return;
+                }
+                
+                var favoriteRule = _.arrFoldl(
+                    currentRules[ 0 ],
+                    _.arrCut( currentRules, 1 ),
+                    function ( a, b ) {
+                        return a.newVal < b.newVal ? a :
+                            b.newVal < a.newVal ? b :
+                            a.cooldownMillis < b.cooldownMillis ? a :
+                            b;
+                    } );
                 
                 var prevUpdateMillis = nextUpdateMillis;
                 
