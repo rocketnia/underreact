@@ -2230,38 +2230,70 @@ function behAnimatedState( defer ) {
                 nextUpdateMillis = entry.startMillis;
             
             var rules = entry.maybeData === null ? [] :
-                _.arrMap( entry.maybeData.val,
+                _.arrMappend( entry.maybeData.val,
                     function ( ruleJson ) {
                     
-                    // TODO: Validate each entry, and just filter it
-                    // out if it's invalid. Specifically, it must be
-                    // one of the following:
+                    // We validate each entry and just filter it out
+                    // if it's invalid. Specifically, it must be one
+                    // of the following:
                     //
                     // - A four-element Array containing the string
-                    //   "replace", a nonnegative fixint, a
-                    //   nonnegative fixint, and a positive integer
-                    //   duration in milliseconds.
+                    //   "replace", a signed 32-bit int, a signed
+                    //   32-bit int, and a positive integer duration
+                    //   in milliseconds.
                     //
                     // - A five-element Array containing the string
-                    //   "rangeAdd", a nonnegative fixint lower bound
-                    //   (inclusive), a nonnegative fixint upper bound
-                    //   (inclusive), a signed fixint which can be
-                    //   added to any fixint in that range without
-                    //   overflowing (or going negative), and a
-                    //   positive integer duration in milliseconds.
+                    //   "rangeAdd", a signed 32-bit int lower bound
+                    //   (inclusive), a signed 32-bit int upper bound
+                    //   (inclusive), a signed 32-bit int which can be
+                    //   added to any int in that range without
+                    //   overflowing, and a positive integer duration
+                    //   in milliseconds. The lower bound must be less
+                    //   than or equal to the upper bound.
+                    
+                    // TODO: Find a more elegant approach using modulo
+                    // arithmetic.
+                    
+                    function isState( x ) {
+                        return x === ~~x;
+                    }
+                    function isIncrement( x ) {
+                        return x === ~~x;
+                    }
+                    function isIntDuration( x ) {
+                        return isValidDuration( x ) && x % 1 === 0;
+                    }
                     
                     var rule = JSON.parse( ruleJson );
-                    if ( rule[ 0 ] === "replace" )
-                        return function ( oldVal ) {
+                    if ( true
+                        && _.likeArray( rule )
+                        && rule.length === 4
+                        && rule[ 0 ] === "replace"
+                        && isState( rule[ 1 ] )
+                        && isState( rule[ 2 ] )
+                        && isIntDuration( rule[ 3 ] )
+                    )
+                        return [ function ( oldVal ) {
                             if ( oldVal !== rule[ 1 ] )
                                 return null;
                             return {
                                 newVal: rule[ 2 ],
                                 cooldownMillis: rule[ 3 ]
                             };
-                        };
-                    else if ( rule[ 0 ] === "rangeAdd" )
-                        return function ( oldVal ) {
+                        } ];
+                    else if ( true
+                        && _.likeArray( rule )
+                        && rule.length === 5
+                        && rule[ 0 ] === "rangeAdd"
+                        && isState( rule[ 1 ] )
+                        && isState( rule[ 2 ] )
+                        && rule[ 1 ] <= rule[ 2 ]
+                        && isIncrement( rule[ 3 ] )
+                        && isState( rule[ 1 ] + rule[ 3 ] )
+                        && isState( rule[ 2 ] + rule[ 3 ] )
+                        && isIntDuration( rule[ 4 ] )
+                    )
+                        return [ function ( oldVal ) {
                             if ( !(rule[ 1 ] <= oldVal
                                 && oldVal <= rule[ 2 ]) )
                                 return null;
@@ -2269,9 +2301,9 @@ function behAnimatedState( defer ) {
                                 newVal: oldVal + rule[ 3 ],
                                 cooldownMillis: rule[ 4 ]
                             };
-                        };
+                        } ];
                     else
-                        throw new Error();
+                        return [];
                 } );
             while ( true ) {
                 if ( entEnd( entry ) < nextUpdateMillis )
@@ -2284,6 +2316,15 @@ function behAnimatedState( defer ) {
                     } );
                 
                 if ( currentRules.length === 0 ) {
+                    // TODO: See if this should reset the state to
+                    // zero instead of prolonging the current state.
+                    // After all, if this state resource is to be a
+                    // discoverable resource, there oughta be some
+                    // justification as to why it started at zero. On
+                    // the other hand, if this is to be a persistent
+                    // resource, we'll actually want it to start in a
+                    // nonzero state, representing the previously
+                    // stored value.
                     nextUpdateMillis =
                         Math.max( nextUpdateMillis, entEnd( entry ) );
                     outSig.history.addEntry( {
