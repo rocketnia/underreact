@@ -85,8 +85,6 @@ _.appendDom( window, { load: function () {
 //    _.defer = customDefer;
     var customDefer = _.defer;
     
-    var rectsDeMon = behDemandMonitor( customDefer );
-    
     var w = 200, h = 200;
     var canvas = _.dom( "canvas", { width: "" + w, height: "" + h } );
     var ctx = canvas.getContext( "2d" );
@@ -128,6 +126,22 @@ _.appendDom( window, { load: function () {
     }
     requestAnimationFrame( draw );
     
+    function makeDeMonCaps() {
+        var resource = behDemandMonitor( customDefer );
+        return {
+            put: {
+                earlyInputType: atom,
+                beh: resource.demander
+            },
+            get: {
+                earlyInputType: atom,
+                beh: resource.monitor
+            }
+        };
+    }
+    
+    var rectsDeMon = makeDeMonCaps();
+    
     runLambdaLangConvenient( [ 1 ], {
         mouse: {
             earlyInputType: atom,
@@ -143,14 +157,8 @@ _.appendDom( window, { load: function () {
                 stabilityMillis: 6
             } )
         },
-        showRect: {
-            earlyInputType: atom,
-            beh: rectsDeMon.demander
-        },
-        getShownRects: {
-            earlyInputType: atom,
-            beh: rectsDeMon.monitor
-        },
+        showRect: rectsDeMon.put,
+        rectsDeMonGet: rectsDeMon.get,
         putRectsOnCanvas: {
             earlyInputType: atom,
             beh: behEventfulTarget( { onUpdate:
@@ -182,7 +190,7 @@ _.appendDom( window, { load: function () {
                 } ) );
         }
         addVoidAgents(
-            v.putRectsOnCanvas.c0( v.getShownRects.c0( a ) ),
+            v.putRectsOnCanvas.c0( v.rectsDeMonGet.c0( a ) ),
             v.showRect.c1( usejf( function ( mouse ) {
                 if ( mouse === null )
                     mouse = [ 0, 0 ];

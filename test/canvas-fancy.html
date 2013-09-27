@@ -85,9 +85,6 @@ _.appendDom( window, { load: function () {
 //    _.defer = customDefer;
     var customDefer = _.defer;
     
-    var rectsDeMon = behDemandMonitor( customDefer );
-    var testAnimatedState = behAnimatedState( customDefer );
-    
     var w = 200, h = 200;
     var canvas = _.dom( "canvas", { width: "" + w, height: "" + h } );
     var ctx = canvas.getContext( "2d" );
@@ -129,6 +126,37 @@ _.appendDom( window, { load: function () {
     }
     requestAnimationFrame( draw );
     
+    function makeDeMonCaps() {
+        var resource = behDemandMonitor( customDefer );
+        return {
+            put: {
+                earlyInputType: atom,
+                beh: resource.demander
+            },
+            get: {
+                earlyInputType: atom,
+                beh: resource.monitor
+            }
+        };
+    }
+    
+    function makeAnimatedStateCaps() {
+        var resource = behAnimatedState( customDefer );
+        return {
+            put: {
+                earlyInputType: atom,
+                beh: resource.demander
+            },
+            get: {
+                earlyInputType: atom,
+                beh: resource.monitor
+            }
+        };
+    }
+    
+    var rectsDeMon = makeDeMonCaps();
+    var drummerAnim = makeAnimatedStateCaps();
+    
     runLambdaLangConvenient( [ 1 ], {
         mouse: {
             earlyInputType: atom,
@@ -144,22 +172,10 @@ _.appendDom( window, { load: function () {
                 stabilityMillis: 6
             } )
         },
-        showRect: {
-            earlyInputType: atom,
-            beh: rectsDeMon.demander
-        },
-        getShownRects: {
-            earlyInputType: atom,
-            beh: rectsDeMon.monitor
-        },
-        putAnimatedRule: {
-            earlyInputType: atom,
-            beh: testAnimatedState.demander
-        },
-        getAnimatedState: {
-            earlyInputType: atom,
-            beh: testAnimatedState.monitor
-        },
+        showRect: rectsDeMon.put,
+        rectsDeMonGet: rectsDeMon.get,
+        drummerAnimPut: drummerAnim.put,
+        drummerAnimGet: drummerAnim.get,
         putRectsOnCanvas: {
             earlyInputType: atom,
             beh: behEventfulTarget( { onUpdate:
@@ -194,7 +210,7 @@ _.appendDom( window, { load: function () {
                 } ) );
         }
         addVoidAgents(
-            v.putRectsOnCanvas.c0( v.getShownRects.c0( a ) ),
+            v.putRectsOnCanvas.c0( v.rectsDeMonGet.c0( a ) ),
             v.showRect.c1( usejf( function ( mouse ) {
                 if ( mouse === null )
                     mouse = [ 0, 0 ];
@@ -202,12 +218,12 @@ _.appendDom( window, { load: function () {
                     20, 20 ];
             }, d.e01( v.mouse.c0( a ) ) ) ),
             v.showRect.c0( k( [ 130, 180, 5, 5 ] ) ),
-            v.putAnimatedRule.c0( k( [ "replace", 0, 1, 300 ] ) ),
-            v.putAnimatedRule.c0( k( [ "replace", 1, 2, 300 ] ) ),
-            v.putAnimatedRule.c0( k( [ "replace", 2, 0, 300 ] ) ),
+            v.drummerAnimPut.c0( k( [ "replace", 0, 1, 300 ] ) ),
+            v.drummerAnimPut.c0( k( [ "replace", 1, 2, 300 ] ) ),
+            v.drummerAnimPut.c0( k( [ "replace", 2, 0, 300 ] ) ),
             v.showRect.c0( usejf( function ( animState ) {
                 return [ 80 + (animState * 20), 150, 5, 5 ];
-            }, v.getAnimatedState.c0( a ) ) ),
+            }, v.drummerAnimGet.c0( a ) ) ),
             $.one()
         );
     } );
