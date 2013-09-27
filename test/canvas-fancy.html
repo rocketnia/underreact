@@ -156,6 +156,7 @@ _.appendDom( window, { load: function () {
     
     var rectsDeMon = makeDeMonCaps();
     var drummerAnim = makeAnimatedStateCaps();
+    var sprinterAnim = makeAnimatedStateCaps();
     
     runLambdaLangConvenient( [ 1 ], {
         mouse: {
@@ -176,6 +177,8 @@ _.appendDom( window, { load: function () {
         rectsDeMonGet: rectsDeMon.get,
         drummerAnimPut: drummerAnim.put,
         drummerAnimGet: drummerAnim.get,
+        sprinterAnimPut: sprinterAnim.put,
+        sprinterAnimGet: sprinterAnim.get,
         putRectsOnCanvas: {
             earlyInputType: atom,
             beh: behEventfulTarget( { onUpdate:
@@ -224,6 +227,23 @@ _.appendDom( window, { load: function () {
             v.showRect.c0( usejf( function ( animState ) {
                 return [ 80 + (animState * 20), 150, 5, 5 ];
             }, v.drummerAnimGet.c0( a ) ) ),
+            v.sprinterAnimPut.c0( usejf( function ( animState ) {
+                // TODO: Pick a better number than 1000000.
+                // TODO: Make sure this doesn't let the value go
+                // negative.
+                // TODO: Whoops, this is probably negative forever,
+                // because (animState - 1) begins as -1. But then the
+                // range would no longer apply to it, so how does that
+                // work...? (Hmm, the first drummerAnim rule applies
+                // instantly upon loading, so (animState - 1) becomes
+                // 0 right away. We actually won't go negative by more
+                // than one step, probably.)
+                return [ "rangeAdd",
+                    0, 1000000, 3 * (animState - 1), 50 ];
+            }, v.drummerAnimGet.c0( a ) ) ),
+            v.showRect.c0( usejf( function ( animState ) {
+                return [ 80 + animState, 130, 5, 5 ];
+            }, v.sprinterAnimGet.c0( a ) ) ),
             $.one()
         );
     } );
@@ -236,12 +256,17 @@ _.appendDom( window, { load: function () {
 <h3>Fancy canvas cursor demo</h3>
 <!-- TODO: Come up with a better title for this demo. -->
 <div id="demo"></div>
-<p>Above, observe a box that follows the cursor, a dot that doesn't
-  follow the cursor, and a dot that moves to the beat of its own
-  drummer.</p>
+<p>Above, observe several things:</p>
+<ul>
+  <li>A dot that moves left, rests, moves right, and repeats.</li>
+  <li>A dot that appears in one place, appears further to the right,
+    appears even further to the right, and repeats.</li>
+  <li>A dot that stays just where it is.</li>
+  <li>A box that follows the cursor.</li>
+</ul>
 <p>Right now, these are actually rendered in locations that are
   relative to the window's viewport. The canvas itself may appear in
-  the wrong place for you to see the boxes, depending on your browser
+  the wrong place for you to see the dots, depending on your browser
   fonts, user stylesheets, text wrapping, scroll position, and maybe
   even zoom level.<p>
 </body>
