@@ -1052,6 +1052,9 @@ function behMerge( type ) {
                     if ( !!informantPair )
                         processInformantsPending( type.offsetMillis );
                 };
+                // TODO: See if this code is prepared for the fact
+                // that readEachEntry may yield entries that overlap
+                // with each other.
                 inSigLeft.readEachEntry( function ( entry ) {
                     leftPending.push( entry );
                     processMergePending();
@@ -1294,6 +1297,9 @@ function behDisjoin( branchType, leftType, rightType ) {
                     } ),
                     dataPending: pending
                 } );
+                // TODO: See if this code is prepared for the fact
+                // that readEachEntry may yield entries that overlap
+                // with each other.
                 inSig.readEachEntry( function ( entry ) {
                     pending.push( entry );
                     processPending();
@@ -1323,6 +1329,9 @@ function behDisjoin( branchType, leftType, rightType ) {
                             condition: condition,
                             history: informantHistory
                         } );
+                    // TODO: See if this code is prepared for the fact
+                    // that readEachEntry may yield entries that
+                    // overlap with each other.
                     inSig.readEachEntry( function ( entry ) {
                         outSig.history.addEntry( entry );
                         if ( !!bin ) {
@@ -1766,33 +1775,41 @@ function behZip() {
         var inSigSecond = inSigs.second.leafInfo;
         var outSig = outSigs.leafInfo;
         
-        var entriesFirst = [];
-        var entriesSecond = [];
-        inSigFirst.readEachEntry( function ( entry ) {
-            entriesFirst.push( entry );
+        var sentMillis = -1 / 0;
+        
+        inSigFirst.syncOnAdd( function () {
             sendOut();
         } );
-        inSigSecond.readEachEntry( function ( entry ) {
-            entriesSecond.push( entry );
+        inSigSecond.syncOnAdd( function () {
             sendOut();
         } );
         function sendOut() {
             // TODO: See if this should use consumeEarliestEntries.
             // For that matter, see if consumeEarliestEntries should
             // use this!
-            if ( entriesFirst.length === 0
-                || entriesSecond.length === 0 )
-                return;
+            var entriesFirst = inSigFirst.history.getAllEntries();
+            var entriesSecond = inSigSecond.history.getAllEntries();
             var endFirstMillis = entsEnd( entriesFirst );
             var endSecondMillis = entsEnd( entriesSecond );
             var endToSendMillis =
                 Math.min( endFirstMillis, endSecondMillis );
+            if ( endToSendMillis <= sentMillis )
+                return;
             eachZipEnts( 0, entriesFirst, entriesSecond,
                 function ( maybeFirstData, maybeSecondData,
                     startMillis, endMillis ) {
                 
+                // NOTE: At this point, if we see inactivity on either
+                // of the signals, it may actually be activity that
+                // was forgotten via forgetBeforeMillis. To address
+                // this, we skip any parts of this loop that occur
+                // before sentMillis.
+                if ( endMillis <= sentMillis )
+                    return;
+                
                 if ( endToSendMillis <= startMillis )
                     return;
+                
                 var thisEndToSendMillis =
                     Math.min( endToSendMillis, endMillis );
                 
@@ -1814,10 +1831,9 @@ function behZip() {
                         null : { val: thisEndToSendMillis }
                 } );
             } );
-            while ( entEnd( entriesFirst[ 0 ] ) <= endToSendMillis )
-                entriesFirst.shift();
-            while ( entEnd( entriesSecond[ 0 ] ) <= endToSendMillis )
-                entriesSecond.shift();
+            inSigFirst.history.forgetBeforeMillis( endToSendMillis );
+            inSigSecond.history.forgetBeforeMillis( endToSendMillis );
+            sentMillis = endToSendMillis;
         }
     };
     return result;
@@ -2201,6 +2217,10 @@ function behAnimatedState( defer ) {
     var currentVal = 0;
     var nextUpdateMillis = -1 / 0;
     
+    // TODO: Whoops, this behavior doesn't preserve duration coupling.
+    // See if there's another way to do this that does. Fortunately,
+    // the duration coupling violation is completely internal to this
+    // state resource.
     var updaterInternal = {};
     updaterInternal.inType = typeAtom( 0, null );
     updaterInternal.outType = typeAtom( 0, null );
@@ -2440,6 +2460,9 @@ function behEventfulSource( opts ) {
             currentVal = newVal;
         } );
         var responsesToGive = [];
+        // TODO: See if this code is prepared for the fact that
+        // readEachEntry may yield entries that overlap with each
+        // other.
         inSig.readEachEntry( function ( entry ) {
             if ( entry.maybeEndMillis.val <= entry.startMillis ) {
                 // Don't bother queuing this response-to-give.

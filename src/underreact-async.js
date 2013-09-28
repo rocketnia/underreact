@@ -1240,6 +1240,7 @@ function makeLinkedSigPair( startMillis ) {
     };
     readable.readEachEntry = function ( processEntry ) {
         // NOTE: This is a convenience method.
+        // NOTE: This may yield entries that overlap with each other.
         readable.syncOnAdd( function () {
             var entries = readable.history.getAllEntries();
             readable.history.forgetBeforeMillis( entsEnd( entries ) );

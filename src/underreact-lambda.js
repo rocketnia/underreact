@@ -368,3 +368,31 @@ lambdaLang.fst = function ( secondType, pair ) {
     };
     return result;
 };
+
+lambdaLang.zip = function ( pair ) {
+    var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "#zip " + pair.toString();
+    };
+    result.getFreeVars = function () {
+        return pair.getFreeVars();
+    };
+    result.compile = function (
+        varInfoByIndex, varInfoByName, outType ) {
+        
+        if ( outType.op !== "atom" )
+            throw new Error();
+        return behSeqs(
+            pair.compile(
+                varInfoByIndex, varInfoByName,
+                typeTimes(
+                    typeAtom( 0, null ), typeAtom( 0, null ) ) ),
+            behZip()
+        );
+    };
+    return result;
+};
+
+lambdaLang.zipTimes = function ( first, second ) {
+    return lambdaLang.zip( lambdaLang.times( first, second ) );
+};

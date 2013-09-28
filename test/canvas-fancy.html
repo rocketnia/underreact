@@ -157,8 +157,53 @@ _.appendDom( window, { load: function () {
     var rectsDeMon = makeDeMonCaps();
     var drummerAnim = makeAnimatedStateCaps();
     var sprinterAnim = makeAnimatedStateCaps();
+    var wasdXAnim = makeAnimatedStateCaps();
+    var wasdYAnim = makeAnimatedStateCaps();
+    
+    var KEYS = {
+        a: 65,
+        d: 68,
+        s: 83,
+        w: 87
+    };
     
     runLambdaLangConvenient( [ 1 ], {
+        keyboard: {
+            earlyInputType: atom,
+            beh: behEventfulSource( {
+                apologyVal: JSON.stringify( [] ),
+                listenOnUpdate: function ( listener ) {
+                    var keysObj = {};
+                    var keysArr = [];
+                    
+                    function keyCode( event ) {
+                        return event.which ||
+                            event.keyCode;  // IE
+                    }
+                    
+                    _.appendDom( window, { keydown: function ( e ) {
+                        var key = keyCode( e );
+                        if ( keysObj[ key ] )
+                            return;
+                        keysObj[ key ] = true;
+                        keysArr.push( key );
+                        listener( JSON.stringify( keysArr ) );
+                    } } );
+                    _.appendDom( window, { keyup: function ( e ) {
+                        var key = keyCode( e );
+                        if ( !keysObj[ key ] )
+                            return;
+                        delete keysObj[ key ];
+                        keysArr = _.arrKeep( keysArr, function ( k ) {
+                            return k !== key;
+                        } );
+                        listener( JSON.stringify( keysArr ) );
+                    } } );
+                },
+                intervalMillis: 1,
+                stabilityMillis: 6
+            } )
+        },
         mouse: {
             earlyInputType: atom,
             beh: behMouseQuery( {
@@ -179,6 +224,10 @@ _.appendDom( window, { load: function () {
         drummerAnimGet: drummerAnim.get,
         sprinterAnimPut: sprinterAnim.put,
         sprinterAnimGet: sprinterAnim.get,
+        wasdXAnimPut: wasdXAnim.put,
+        wasdXAnimGet: wasdXAnim.get,
+        wasdYAnimPut: wasdYAnim.put,
+        wasdYAnimGet: wasdYAnim.get,
         putRectsOnCanvas: {
             earlyInputType: atom,
             beh: behEventfulTarget( { onUpdate:
@@ -212,6 +261,13 @@ _.appendDom( window, { load: function () {
                     return d.e01( from1( a, expr ) );
                 } ) );
         }
+        function jzipTimes( first, second ) {
+            return usef( function ( pair ) {
+                return JSON.stringify( [
+                    JSON.parse( pair[ 0 ] ),
+                    JSON.parse( pair[ 1 ] ) ] );
+            }, $.zipTimes( first, second ) );
+        }
         function allAdd( increment, cooldownMillis ) {
             return [ "rangeAdd",
                 -0x80000000 - Math.min( 0, increment ),
@@ -221,25 +277,68 @@ _.appendDom( window, { load: function () {
         }
         addVoidAgents(
             v.putRectsOnCanvas.c0( v.rectsDeMonGet.c0( a ) ),
+            
             v.showRect.c1( usejf( function ( mouse ) {
                 if ( mouse === null )
                     mouse = [ 0, 0 ];
                 return [ mouse[ 0 ] - 10, mouse[ 1 ] - 10,
                     20, 20 ];
             }, d.e01( v.mouse.c0( a ) ) ) ),
+            
             v.showRect.c0( k( [ 130, 180, 5, 5 ] ) ),
+            
             v.drummerAnimPut.c0( k( [ "replace", 0, 1, 300 ] ) ),
             v.drummerAnimPut.c0( k( [ "replace", 1, 2, 300 ] ) ),
             v.drummerAnimPut.c0( k( [ "replace", 2, 0, 300 ] ) ),
             v.showRect.c0( usejf( function ( animState ) {
                 return [ 80 + (animState * 20), 150, 5, 5 ];
             }, v.drummerAnimGet.c0( a ) ) ),
+            
             v.sprinterAnimPut.c0( usejf( function ( animState ) {
                 return allAdd( 3 * (animState - 1), 50 );
             }, v.drummerAnimGet.c0( a ) ) ),
             v.showRect.c0( usejf( function ( animState ) {
                 return [ 80 + animState, 130, 5, 5 ];
             }, v.sprinterAnimGet.c0( a ) ) ),
+            
+            v.wasdXAnimPut.c0( usejf( function ( keys ) {
+                var keysObj = {};
+                _.arrEach( keys, function ( key ) {
+                    keysObj[ key ] = true;
+                } );
+                var dir = (keysObj[ KEYS.d ] ? 1 : 0) -
+                    (keysObj[ KEYS.a ] ? 1 : 0);
+                if ( dir === -1 )
+                    return allAdd( -3, 50 );
+                else if ( dir === 1 )
+                    return allAdd( 3, 50 );
+                else
+                    return [];
+                // TODO: Instead of returning the invalid rule [],
+                // don't apply any rule at all.
+            }, v.keyboard.c0( a ) ) ),
+            v.wasdYAnimPut.c0( usejf( function ( keys ) {
+                var keysObj = {};
+                _.arrEach( keys, function ( key ) {
+                    keysObj[ key ] = true;
+                } );
+                var dir = (keysObj[ KEYS.s ] ? 1 : 0) -
+                    (keysObj[ KEYS.w ] ? 1 : 0);
+                if ( dir === -1 )
+                    return allAdd( -3, 50 );
+                else if ( dir === 1 )
+                    return allAdd( 3, 50 );
+                else
+                    return [];
+                // TODO: Instead of returning the invalid rule [],
+                // don't apply any rule at all.
+            }, v.keyboard.c0( a ) ) ),
+            v.showRect.c0( usejf( function ( animState ) {
+                return [
+                    80 + animState[ 0 ], 200 + animState[ 1 ], 5, 5 ];
+            }, jzipTimes(
+                v.wasdXAnimGet.c0( a ), v.wasdYAnimGet.c0( a ) ) ) ),
+            
             $.one()
         );
     } );
@@ -249,7 +348,7 @@ _.appendDom( window, { load: function () {
 </script>
 </head>
 <body>
-<h3>Fancy canvas cursor demo</h3>
+<h3>Fancy canvas demo</h3>
 <!-- TODO: Come up with a better title for this demo. -->
 <div id="demo"></div>
 <p>Above, observe several things:</p>
@@ -266,6 +365,7 @@ for the first time.
 -->
   
   <li>A dot that stays just where it is.</li>
+  <li>A dot that can be controlled using the WASD keys.</li>
   <li>A box that follows the cursor.</li>
 </ul>
 <p>Right now, these are actually rendered in locations that are
