@@ -294,6 +294,21 @@ _.appendDom( window, { load: function () {
                 return [ 80 + (animState * 20), 150, 5, 5 ];
             }, v.drummerAnimGet.c0( a ) ) ),
             
+            // TODO: Uncomment this once it actually works. It get
+            // into an infinite loop somewhere down the line. I think
+            // this is the first time we've actually used behMerge,
+            // behDisjoin, behClosure, and behCall, so there's going
+            // to be a lot of debugging to do.
+//            $.letPlus(
+//                $.useBeh( behSplit(), usef( function ( animState ) {
+//                    return JSON.parse( animState ) === 0 ?
+//                        [ "<", [] ] : [ ">", [] ];
+//                }, v.drummerAnimGet.c0( a ) ) ),
+//                typePlus( atom, atom ),
+//                "then", v.showRect.c0( k( [ 40, 150, 5, 5 ] ) ),
+//                "else", v.showRect.c0( k( [ 50, 150, 5, 5 ] ) )
+//            ),
+            
             v.sprinterAnimPut.c0( usejf( function ( animState ) {
                 return allAdd( 3 * (animState - 1), 50 );
             }, v.drummerAnimGet.c0( a ) ) ),

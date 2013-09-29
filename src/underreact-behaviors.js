@@ -29,36 +29,53 @@
 // OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
+function UnderreactType() {}
+UnderreactType.prototype.init_ = function ( properties ) {
+    var self = this;
+    _.objOwnEach( properties, function ( k, v ) {
+        self[ k ] = v;
+    } );
+    return self;
+};
+
 // NOTE: The leafInfo parameters aren't actually part of the types for
 // equality purposes, but we use them to annotate the type tree with
 // metadata.
 function typeAtom( offsetMillis, leafInfo ) {
     if ( !isValidDuration( offsetMillis ) )
         throw new Error();
-    return { op: "atom",
-        offsetMillis: offsetMillis, leafInfo: leafInfo };
+    return new UnderreactType().init_( { op: "atom",
+        offsetMillis: offsetMillis, leafInfo: leafInfo } );
 }
 function typeTimes( first, second ) {
-    if ( first === void 0 || second === void 0 )
+    if ( !(first instanceof UnderreactType) )
         throw new Error();
-    return { op: "times", first: first, second: second };
+    if ( !(second instanceof UnderreactType) )
+        throw new Error();
+    return new UnderreactType().init_( { op: "times",
+        first: first, second: second } );
 }
 function typeOne() {
-    return { op: "one" };
+    return new UnderreactType().init_( { op: "one" } );
 }
 function typePlus( left, right ) {
-    if ( left === void 0 || right === void 0 )
+    if ( !(left instanceof UnderreactType) )
         throw new Error();
-    return { op: "plus", left: left, right: right };
+    if ( !(right instanceof UnderreactType) )
+        throw new Error();
+    return new UnderreactType().init_( { op: "plus",
+        left: left, right: right } );
 }
 function typeZero() {
-    return { op: "zero" };
+    return new UnderreactType().init_( { op: "zero" } );
 }
 function typeAnytimeFn( demand, response, leafInfo ) {
-    if ( demand === void 0 || response === void 0 )
+    if ( !(demand instanceof UnderreactType) )
         throw new Error();
-    return { op: "anytimeFn",
-        demand: demand, response: response, leafInfo: leafInfo };
+    if ( !(response instanceof UnderreactType) )
+        throw new Error();
+    return new UnderreactType().init_( { op: "anytimeFn",
+        demand: demand, response: response, leafInfo: leafInfo } );
 }
 
 function typeIsStaticList( type ) {
@@ -744,8 +761,8 @@ function behLeft( beh, otherType ) {
 }
 function behMirror( origLeftType, origRightType ) {
     var result = {};
-    result.inType = typeTimes( origLeftType, origRightType );
-    result.outType = typeTimes( origRightType, origLeftType );
+    result.inType = typePlus( origLeftType, origRightType );
+    result.outType = typePlus( origRightType, origLeftType );
     result.install = function ( context, inSigs, outSigs ) {
         behId( origLeftType ).install( context,
             inSigs.left, outSigs.right );
@@ -807,8 +824,8 @@ function behAssocrs( pitcherType, ballType, catcherType ) {
 // exponential.)
 //
 function behMerge( type ) {
-    var informantsAvailable = makeOffsetMap();
-    var informantsNeeded = makeOffsetMap();
+    var informantsAvailable = makeOffsetMillisMap();
+    var informantsNeeded = makeOffsetMillisMap();
     eachTypeLeafNodeOver( type, function ( type, unused ) {
         if ( type.op === "atom" ) {
             informantsAvailable.set( type.offsetMillis, true );
@@ -1271,7 +1288,7 @@ function behDisjoin( branchType, leftType, rightType ) {
         var bins = [];
         function getBin( offsetMillis ) {
             return _.arrAny( bins, function ( bin ) {
-                return bin.offsetMillis === offsetMillis;
+                return bin.offsetMillis === offsetMillis && bin;
             } );
         }
         eachTypeLeafNodeOver(
@@ -1325,7 +1342,7 @@ function behDisjoin( branchType, leftType, rightType ) {
                             startMillis: context.startMillis
                         } );
                     if ( !!bin )
-                        informants.push( {
+                        bin.informants.push( {
                             condition: condition,
                             history: informantHistory
                         } );
@@ -1561,7 +1578,7 @@ function behClosure( beh ) {
     result.install = function (
         context, inSigsEncapsulated, outSigsFunc ) {
         
-        var outSigFunc = outSigsFunc.pairInfo;
+        var outSigFunc = outSigsFunc.leafInfo;
         
         var invocations = [];
         
@@ -1597,7 +1614,8 @@ function behClosure( beh ) {
                 context.startMillis, encapsulatedType );
             
             eachTypeLeafNodeOver(
-                inSigEncapsulated, delayedEncapsulatedPairs.writables,
+                inSigsEncapsulated,
+                delayedEncapsulatedPairs.writables,
                 function ( type, inSig, outSig ) {
                 
                 if ( type.op === "atom" ) {
@@ -1632,9 +1650,9 @@ function behClosure( beh ) {
             // we're using here, we're committing no crimes against
             // duration coupling.
             //
-            behSigs(
+            behSeqs(
                 behDisjoin( encapsulatedType, paramType, typeOne() ),
-                typeEither(
+                behEither(
                     beh,
                     behDrop(
                         typeTimes( encapsulatedType, typeOne() ) )
@@ -1896,7 +1914,7 @@ function behYield( delayMillis ) {
 // it.
 function connectMembraneToBehaviors( pairHalf, context, delayToBeh ) {
     
-    var pool = makeOffsetMap();
+    var pool = makeOffsetMillisMap();
     var demandPermanentUntilMillis = -1 / 0;
     
     function getOrMakePoolEntry( delayMillis, startMillis ) {
@@ -1979,7 +1997,7 @@ function connectMembraneToBehaviors( pairHalf, context, delayToBeh ) {
     }
     
     function retractPoolBeforeNextStartMillis( nextStartMillis ) {
-        var newPool = makeOffsetMap();
+        var newPool = makeOffsetMillisMap();
         pool.each( function ( delayMillis, bin ) {
             var newBin = _.arrKeep( bin, function ( poolEntry ) {
                 return poolEntry.nextStartMillis < nextStartMillis;

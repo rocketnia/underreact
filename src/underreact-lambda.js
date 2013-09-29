@@ -112,6 +112,46 @@ function lambdaLangVarInfoByIndexToType( varInfoByIndex ) {
     } );
 }
 
+function lambdaLangVarInfoByIndexToByName( varInfoByIndex ) {
+    var varInfoByName = makeLambdaLangNameMap();
+    _.arrEach( varInfoByIndex, function ( varInfo, i ) {
+        varInfoByName.set(
+            varInfo.name, { type: varInfo.type, index: i } );
+    } );
+    return varInfoByName;
+}
+
+function behLambdaLang( origVarInfoByIndex, expr, outType ) {
+    var finalFreeVars = expr.getFreeVars();
+    var almostResult = _.arrFoldr( origVarInfoByIndex, {
+        varTypeBefore: typeOne(),
+        varInfoByIndexAfter: [],
+        beh: behId( typeOne() )
+    }, function ( varInfo, r ) {
+        
+        return finalFreeVars.has( varInfo.name ) ? {
+            varTypeBefore: typeTimes( varInfo.type, r.varTypeBefore ),
+            varInfoByIndexAfter:
+                [ varInfo ].concat( r.varInfoByIndexAfter ),
+            beh: behPar( behId( varInfo.type ), r.beh )
+        } : {
+            varTypeBefore: typeTimes( varInfo.type, r.varTypeBefore ),
+            varInfoByIndexAfter: r.varInfoByIndexAfter,
+            beh: behSeqs(
+                behSnd( varInfo.type, r.varTypeBefore ),
+                r.beh
+            )
+        };
+    } );
+    var varInfoByName = lambdaLangVarInfoByIndexToByName(
+        almostResult.varInfoByIndexAfter );
+    return behSeqs(
+        almostResult.beh,
+        expr.compile(
+            almostResult.varInfoByIndexAfter, varInfoByName, outType )
+    );
+}
+
 lambdaLang.fn = function ( argName, body ) {
     if ( !_.isString( argName ) )
         throw new Error();
@@ -135,68 +175,30 @@ lambdaLang.fn = function ( argName, body ) {
             throw new Error();
         var argType = outType.demand;
         var innerOutType = outType.response;
+        
+        // NOTE: We only receive the variables we need, so we don't
+        // need to worry about introducing a duplicate variable name
+        // here. Just to be safe, however, we do a sanity check first.
+        if ( varInfoByName.has( argName ) )
+            throw new Error();
         var innerVarInfoByIndex = [ { name: argName, type: argType }
             ].concat( varInfoByIndex );
-        var innerVarInfoByName = varInfoByName.map(
-            function ( varInfo ) {
-            
-            return { index: varInfo.index + 1, type: varInfo.type };
-        } );
-        innerVarInfoByName.set(
-            argName, { index: 0, type: argType } );
         
         return behClosure( behSeqs(
             behSwap( lambdaLangVarInfoByIndexToType( varInfoByIndex ),
                 argType ),
-            body.compile( innerVarInfoByIndex, innerVarInfoByName,
-                innerOutType )
+            behLambdaLang( innerVarInfoByIndex, body, innerOutType )
         ) );
     };
     return result;
 };
 
-function behLambdaLangFilter( origVarInfoByIndex, expr, outType ) {
-    var finalFreeVars = expr.getFreeVars();
-    var almostResult = _.arrFoldr( origVarInfoByIndex, {
-        varTypeBefore: typeOne(),
-        varInfoByIndexAfter: [],
-        beh: behId( typeOne() )
-    }, function ( varInfo, r ) {
-        
-        return finalFreeVars.has( varInfo.name ) ? {
-            varTypeBefore: typeTimes( varInfo.type, r.varTypeBefore ),
-            varInfoByIndexAfter:
-                [ varInfo ].concat( r.varInfoByIndexAfter ),
-            beh: behPar( behId( varInfo.type ), r.beh )
-        } : {
-            varTypeBefore: typeTimes( varInfo.type, r.varTypeBefore ),
-            varInfoByIndexAfter: r.varInfoByIndexAfter,
-            beh: behSeqs(
-                behSnd( varInfo.type, r.varTypeBefore ),
-                r.beh
-            )
-        };
-    } );
-    var varInfoByName = makeLambdaLangNameMap();
-    _.arrEach( almostResult.varInfoByIndexAfter, function ( varInfo, i ) {
-        varInfoByName.set(
-            varInfo.name, { type: varInfo.type, index: i } );
-    } );
-    return behSeqs(
-        almostResult.beh,
-        expr.compile(
-            almostResult.varInfoByIndexAfter, varInfoByName, outType )
-    );
-}
-
 function behDupParLambdaLang( varInfoByIndex,
     firstExpr, firstOutType, secondExpr, secondOutType ) {
     
     return behDupPar(
-        behLambdaLangFilter(
-            varInfoByIndex, firstExpr, firstOutType ),
-        behLambdaLangFilter(
-            varInfoByIndex, secondExpr, secondOutType )
+        behLambdaLang( varInfoByIndex, firstExpr, firstOutType ),
+        behLambdaLang( varInfoByIndex, secondExpr, secondOutType )
     );
 }
 
@@ -395,4 +397,82 @@ lambdaLang.zip = function ( pair ) {
 
 lambdaLang.zipTimes = function ( first, second ) {
     return lambdaLang.zip( lambdaLang.times( first, second ) );
+};
+
+lambdaLang.letPlus = function ( condition, conditionType,
+    leftName, leftThen, rightName, rightThen ) {
+    
+    if ( !(condition instanceof LambdaLangCode) )
+        throw new Error();
+    // TODO: Verify that conditionType is a type.
+    if ( conditionType.op !== "plus" )
+        throw new Error();
+    if ( !_.isString( leftName ) )
+        throw new Error();
+    leftName += "";
+    if ( !_.isString( rightName ) )
+        throw new Error();
+    rightName += "";
+    if ( !(leftThen instanceof LambdaLangCode) )
+        throw new Error();
+    if ( !(rightThen instanceof LambdaLangCode) )
+        throw new Error();
+    
+    // NOTE: This lets us avoid writing variable-shadowing code.
+    var leftFn = lambdaLang.fn( leftName, leftThen );
+    var rightFn = lambdaLang.fn( rightName, rightThen );
+    
+    var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "(#case " + condition.toString() + " " +
+//            ": " + typeToString( conditionType ) + " " +
+            "in " +
+            "#left " + leftName + " -> " +
+                leftThen.toString() + " ; " +
+            "#right " + rightName + " -> " +
+                rightThen.toString() + ")";
+    };
+    result.getFreeVars = function () {
+        var leftFreeVars = leftThen.getFreeVars().copy();
+        leftFreeVars.del( leftName );
+        var rightFreeVars = rightThen.getFreeVars().copy();
+        rightFreeVars.del( rightName );
+        return condition.getFreeVars().
+            plus( leftFreeVars ).plus( rightFreeVars );
+    };
+    result.compile = function (
+        varInfoByIndex, varInfoByName, outType ) {
+        
+        var $ = lambdaLang;
+        var fnsType = typeTimes(
+            typeAnytimeFn( conditionType.left, outType, null ),
+            typeAnytimeFn( conditionType.right, outType, null ) )
+        return behSeqs(
+            behLambdaLang( varInfoByIndex,
+                $.times(
+                    $.times(
+                        $.fn( leftName, leftThen ),
+                        $.fn( rightName, rightThen ) ),
+                    condition ),
+                typeTimes( fnsType, conditionType ) ),
+            behDisjoin(
+                fnsType, conditionType.left, conditionType.right ),
+            behEither(
+                behSeqs(
+                    behFirst(
+                        behFst( fnsType.first, fnsType.second ),
+                        conditionType.left ),
+                    behCall( fnsType.first )
+                ),
+                behSeqs(
+                    behFirst(
+                        behSnd( fnsType.first, fnsType.second ),
+                        conditionType.right ),
+                    behCall( fnsType.second )
+                )
+            ),
+            behMerge( outType )
+        );
+    };
+    return result;
 };
