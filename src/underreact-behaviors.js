@@ -1312,6 +1312,7 @@ function behDisjoin( branchType, leftType, rightType ) {
                     conditionPending: new ActivityHistory().init( {
                         startMillis: context.startMillis
                     } ),
+                    finalCondition: null,
                     dataPending: pending
                 } );
                 // TODO: See if this code is prepared for the fact
@@ -1383,7 +1384,6 @@ function behDisjoin( branchType, leftType, rightType ) {
                     var addConditionEntry =
                         function ( conditionEntry ) {
                         
-                        didSomething = true;
                         var endMillis = entEnd( conditionEntry );
                         _.arrEach( bin.informants,
                             function ( informant ) {
@@ -1394,8 +1394,40 @@ function behDisjoin( branchType, leftType, rightType ) {
                         _.arrEach( bin.branchesPending,
                             function ( branch ) {
                             
+                            // TODO: See if we should also check if
+                            // the entry would be too early to make a
+                            // difference to this history.
+                            if ( branch.finalCondition !== null )
+                                return;
+                            didSomething = true;
                             branch.conditionPending.addEntry(
                                 conditionEntry );
+                        } );
+                    };
+                    var addFinalConditionEntry =
+                        function ( condition, startMillis ) {
+                        
+                        _.arrEach( bin.informants,
+                            function ( informant ) {
+                            
+                            informant.history.forgetBeforeMillis(
+                                1 / 0 );
+                        } );
+                        _.arrEach( bin.branchesPending,
+                            function ( branch ) {
+                            
+                            var prevEndMillis = entEnd(
+                                branch.conditionPending.
+                                    getLastEntry() );
+                            if ( prevEndMillis === 1 / 0 )
+                                return;
+                            didSomething = true;
+                            branch.conditionPending.addEntry( {
+                                maybeData: null,
+                                startMillis: startMillis,
+                                maybeEndMillis: null
+                            } );
+                            branch.finalCondition = condition;
                         } );
                     };
                     
@@ -1435,13 +1467,14 @@ function behDisjoin( branchType, leftType, rightType ) {
                                 return -1 / 0;
                             return entEnd( entry );
                         } );
-                        if ( bothInactive !== -1 / 0 )
+                        if ( bothInactive === 1 / 0 )
+                            addFinalConditionEntry(
+                                "bothInactive", startMillis );
+                        else if ( bothInactive !== -1 / 0 )
                             addConditionEntry( {
-                                maybeData: null,
+                                maybeData: { val: "bothInactive" },
                                 startMillis: startMillis,
-                                maybeEndMillis:
-                                    bothInactive === 1 / 0 ? null :
-                                        { val: bothInactive }
+                                maybeEndMillis: { val: bothInactive }
                             } );
                         
                         var allNegatory = arrMin( bin.informants,
@@ -1456,13 +1489,14 @@ function behDisjoin( branchType, leftType, rightType ) {
                                 return -1 / 0;
                             return entEnd( entry );
                         } );
-                        if ( allNegatory !== -1 / 0 )
+                        if ( allNegatory === 1 / 0 )
+                            addFinalConditionEntry(
+                                condition, startMillis );
+                        else if ( allNegatory !== -1 / 0 )
                             addConditionEntry( {
                                 maybeData: { val: condition },
                                 startMillis: startMillis,
-                                maybeEndMillis:
-                                    allNegatory === 1 / 0 ? null :
-                                        { val: allNegatory }
+                                maybeEndMillis: { val: allNegatory }
                             } );
                     } );
                 } while ( didSomething );
@@ -1491,23 +1525,22 @@ function behDisjoin( branchType, leftType, rightType ) {
                             maybeEndMillis: dataEntry.maybeEndMillis
                         };
                         
+                        var condition =
+                            conditionEntry.maybeData === null ?
+                                branch.finalCondition :
+                                conditionEntry.maybeData.val;
+                        
                         if ( dataEntry.maybeData === null ) {
                             branch.outSigLeft.history.addEntry(
                                 nullEntry );
                             branch.outSigRight.history.addEntry(
                                 nullEntry );
-                            
-                        } else if ( conditionEntry.maybeData.val ===
-                            "left" ) {
-                            
+                        } else if ( condition === "left" ) {
                             branch.outSigLeft.history.addEntry(
                                 dataEntry );
                             branch.outSigRight.history.addEntry(
                                 nullEntry );
-                            
-                        } else if ( conditionEntry.maybeData.val ===
-                            "right" ) {
-                            
+                        } else if ( condition === "right" ) {
                             branch.outSigLeft.history.addEntry(
                                 nullEntry );
                             branch.outSigRight.history.addEntry(
@@ -1591,9 +1624,10 @@ function behClosure( beh ) {
             if ( type.op === "atom" ) {
                 inSig.readEachEntry( function ( entry ) {
                     _.arrEach( invocations, function ( invocation ) {
-                        var writable = get( invocation.writables );
-                        delayAddEntry(
-                            writable, invocation.delayMillis, entry );
+                        var responseSig =
+                            get( invocation.writables ).leafInfo;
+                        delayAddEntry( responseSig,
+                            invocation.delayMillis, entry );
                     } );
                 } );
             } else if ( type.op === "anytimeFn" ) {
@@ -1764,7 +1798,9 @@ function behSplit() {
                 && _.likeArray( entry.maybeData.val )
                 && entry.maybeData.val.length === 2 )
                 direction = entry.maybeData.val[ 0 ];
-            if ( !(direction === "<" || direction === ">") )
+            if ( !(direction === null
+                || direction === "<"
+                || direction === ">") )
                 throw new Error();
             outSigLeft.history.addEntry( {
                 maybeData: direction === "<" ?

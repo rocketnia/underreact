@@ -252,8 +252,11 @@ _.appendDom( window, { load: function () {
                 return JSON.stringify( func( JSON.parse( input ) ) );
             }, expr );
         }
+        function dk( val, activity ) {
+            return usef( _.kfn( JSON.stringify( val ) ), activity );
+        }
         function k( val ) {
-            return usef( _.kfn( JSON.stringify( val ) ), a );
+            return dk( val, a );
         }
         function addVoidAgents( var_args ) {
             addAgents.apply( {},
@@ -294,20 +297,21 @@ _.appendDom( window, { load: function () {
                 return [ 80 + (animState * 20), 150, 5, 5 ];
             }, v.drummerAnimGet.c0( a ) ) ),
             
-            // TODO: Uncomment this once it actually works. It get
-            // into an infinite loop somewhere down the line. I think
-            // this is the first time we've actually used behMerge,
-            // behDisjoin, behClosure, and behCall, so there's going
-            // to be a lot of debugging to do.
-//            $.letPlus(
-//                $.useBeh( behSplit(), usef( function ( animState ) {
-//                    return JSON.parse( animState ) === 0 ?
-//                        [ "<", [] ] : [ ">", [] ];
-//                }, v.drummerAnimGet.c0( a ) ) ),
-//                typePlus( atom, atom ),
-//                "then", v.showRect.c0( k( [ 40, 150, 5, 5 ] ) ),
-//                "else", v.showRect.c0( k( [ 50, 150, 5, 5 ] ) )
-//            ),
+            $.letPlus(
+                $.useBeh( behSplit(), usef( function ( animState ) {
+                    return JSON.parse( animState ) === 0 ?
+                        [ "<", [] ] : [ ">", [] ];
+                }, v.drummerAnimGet.c0( a ) ) ),
+                typePlus( atom, atom ),
+                // NOTE: It's interesting that we actually have to
+                // thread the activity of these branches through our
+                // computation in order to mask the side effects, but
+                // it makes sense.
+                "then", v.showRect.c0(
+                    dk( [ 40, 150, 5, 5 ], $.va( "then" ) ) ),
+                "else", v.showRect.c0(
+                    dk( [ 50, 150, 5, 5 ], $.va( "else" ) ) )
+            ),
             
             v.sprinterAnimPut.c0( usejf( function ( animState ) {
                 return allAdd( 3 * (animState - 1), 50 );
@@ -371,7 +375,11 @@ _.appendDom( window, { load: function () {
   
   <li>A dot that moves left, rests, moves right, and repeats.</li>
   <li>A dot that appears in one place, appears further to the right,
-    appears even further to the right, and repeats.</li>
+    rests, and repeats. (This dot tests conditional branching.)</li>
+  <li>A dot that appears in one place, appears further to the right,
+    appears even further to the right, and repeats. (These periodic
+    animations all use the same state, and this dot displays that
+    state the most directly.)</li>
 <!--
 TODO: Actually, the above aren't accurate descriptions. The
 drummerAnim moves to the center immediately upon startup, and hence

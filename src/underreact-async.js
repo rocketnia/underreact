@@ -202,7 +202,7 @@ function arrMin( arr, func ) {
 }
 
 function arrMax( arr, func ) {
-    return _.arrFoldl( 1 / 0, arr, function ( soFar, item ) {
+    return _.arrFoldl( -1 / 0, arr, function ( soFar, item ) {
         return Math.max( soFar, func( item ) );
     } );
 }
@@ -334,6 +334,11 @@ ActivityHistory.prototype.getFirstEntry = function () {
     // NOTE: This is a convenience method for getAllEntries, but it
     // also avoids copying the Array.
     return this.entries_[ 0 ];
+};
+ActivityHistory.prototype.getLastEntry = function () {
+    // NOTE: This is a convenience method for getAllEntries, but it
+    // also avoids copying the Array.
+    return this.entries_[ this.entries_.length - 1 ];
 };
 ActivityHistory.prototype.isEmpty = function () {
     // NOTE: This is a convenience method for getAllEntries, but it
