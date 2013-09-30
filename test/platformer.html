@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=UTF-8" />
+<title>Platformer using Underreact</title>
+<!-- platformer.html (part of Underreact) -->
+<!--
+
+The copyright and license information below applies to this file as an
+independent work. Other files commonly used or bundled with this one
+may have different authors and different posted licenses.
+
+-->
+<!--
+
+Copyright (c) 2012, Ross Angle
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+* Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+-->
+<meta name="viewport"
+    content="initial-scale = 1.0, maximum-scale = 1.0" />
+<style type="text/css">
+</style>
+
+<script type="text/javascript" src="../lib/lathe.js"></script>
+
+<script type="text/javascript">"use strict";
+var _ = rocketnia.lathe;
+</script>
+<script type="text/javascript" src="../src/underreact-async.js"
+    ></script>
+<script type="text/javascript" src="../src/underreact-behaviors.js"
+    ></script>
+<script type="text/javascript" src="../src/underreact-lambda.js"
+    ></script>
+<script type="text/javascript" src="tests.js"></script>
+<script type="text/javascript">"use strict";
+_.appendDom( window, { load: function () {
+    
+    var atom = typeAtom( 0, null );
+    
+    // TODO: Use something like this for Lathe.js's _.defer(). Right
+    // here we're non-modularly hacking it in (or rather we aren't,
+    // since right now the crucial line is commented out).
+    //
+    // TODO: Actually, see if we need this at all. This code is
+    // commented out, and it doesn't seem to make a difference.
+    //
+    // TODO: Test postMessage on various browsers.
+    //
+    var customDeferredFuncs = [];
+    var customDefer = function ( deferredFunc ) {
+        customDeferredFuncs.push( deferredFunc );
+        postMessage( "customDefer", "*" );
+    };
+    _.appendDom( window, { message: function ( e ) {
+        if ( e.source === window
+            && e.data === "customDefer"
+            && customDeferredFuncs.length !== 0 )
+            customDeferredFuncs.pop()();
+    } } );
+//    _.defer = customDefer;
+    var customDefer = _.defer;
+    
+    var w = 200, h = 200;
+    var canvas = _.dom( "canvas", { width: "" + w, height: "" + h } );
+    var ctx = canvas.getContext( "2d" );
+    
+    function elPos( el ) {
+        // NOTE: This is loosely taken from an example at
+        // <http://www.kirupa.com/html5/get_element_position_using_javascript.htm>.
+        var x = 0, y = 0;
+        for ( var e = el; e !== null; e = e.offsetParent ) {
+            x += e.offsetLeft - e.scrollLeft + e.clientLeft;
+            y += e.offsetTop - e.scrollTop + e.clientTop;
+        }
+        return { x: x, y: y };
+    }
+    
+    // TODO: Test requestAnimationFrame on various browsers. Some
+    // important browsers may not support it or may only support it
+    // under a prefix.
+    var latestShapes = [];
+    var drawNecessary = true;
+    function draw() {
+        if ( !drawNecessary )
+            return;
+        
+        drawNecessary = false;
+        
+        ctx.fillStyle = "#000000";
+        ctx.fillRect( 0, 0, w, h );
+        var cPos = elPos( canvas );
+        _.arrEach( latestShapes, function ( shape ) {
+            function parseCoord( coord ) {
+                if ( coord[ 0 ] === "viewport" ) {
+                    return {
+                        x: coord[ 1 ] - cPos.x,
+                        y: coord[ 2 ] - cPos.y
+                    };
+                } else if ( coord[ 0 ] === "canvas" ) {
+                    return { x: coord[ 1 ], y: coord[ 2 ] };
+                } else {
+                    throw new Error();
+                }
+            }
+            if ( shape[ 0 ] === "rect" ) {
+                ctx.fillStyle = "" + shape[ 1 ];
+                var tl = parseCoord( shape[ 2 ] );
+                ctx.fillRect( tl.x, tl.y, shape[ 3 ], shape[ 4 ] );
+            } else {
+                throw new Error();
+            }
+        } );
+    }
+    requestAnimationFrame( draw );
+    
+    function makeDeMonCaps() {
+        var resource = behDemandMonitor( customDefer );
+        return {
+            put: {
+                earlyInputType: atom,
+                beh: resource.demander
+            },
+            get: {
+                earlyInputType: atom,
+                beh: resource.monitor
+            }
+        };
+    }
+    
+    function makeInt32AnimatedStateCaps() {
+        
+        // We validate each entry and just filter it out if it's
+        // invalid. Specifically, it must be one of the following:
+        //
+        // - A four-element Array containing the string "replace", a
+        //   signed 32-bit int, a signed 32-bit int, and a positive
+        //   integer duration in milliseconds.
+        //
+        // - A five-element Array containing the string "rangeAdd", a
+        //   signed 32-bit int lower bound (inclusive), a signed
+        //   32-bit int upper bound (inclusive), a signed 32-bit int
+        //   which can be added to any int in that range without
+        //   overflowing, and a positive integer duration in
+        //   milliseconds. The lower bound must be less than or equal
+        //   to the upper bound.
+        
+        // TODO: Find a more elegant approach using modulo arithmetic.
+        
+        function isState( x ) {
+            return x === ~~x;
+        }
+        function isIncrement( x ) {
+            return x === ~~x;
+        }
+        function isIntDuration( x ) {
+            return isValidDuration( x ) && x % 1 === 0;
+        }
+        
+        var resource = behAnimatedState( customDefer, 0,
+            function ( a, b ) {
+                return a < b ? -1 : b < a ? 1 : 0;
+            },
+        {
+            replace: function ( rule ) {
+                rule = JSON.parse( rule );
+                if ( !(true
+                    && _.likeArray( rule )
+                    && rule.length === 3
+                    && isState( rule[ 0 ] )
+                    && isState( rule[ 1 ] )
+                    && isIntDuration( rule[ 2 ] )
+                ) )
+                    return [];
+                return [ function ( oldVal ) {
+                    if ( oldVal !== rule[ 0 ] )
+                        return null;
+                    return {
+                        newVal: rule[ 1 ],
+                        cooldownMillis: rule[ 2 ]
+                    };
+                } ];
+            },
+            rangeAdd: function ( rule ) {
+                rule = JSON.parse( rule );
+                if ( !(true
+                    && _.likeArray( rule )
+                    && rule.length === 4
+                    && isState( rule[ 0 ] )
+                    && isState( rule[ 1 ] )
+                    && rule[ 0 ] <= rule[ 1 ]
+                    && isIncrement( rule[ 2 ] )
+                    && isState( rule[ 0 ] + rule[ 2 ] )
+                    && isState( rule[ 1 ] + rule[ 2 ] )
+                    && isIntDuration( rule[ 3 ] )
+                ) )
+                    return [];
+                return [ function ( oldVal ) {
+                    if ( !(rule[ 0 ] <= oldVal
+                        && oldVal <= rule[ 1 ]) )
+                        return null;
+                    return {
+                        newVal: oldVal + rule[ 2 ],
+                        cooldownMillis: rule[ 3 ]
+                    };
+                } ];
+            }
+        } );
+        return {
+            put: {
+                earlyInputType: atom,
+                beh: resource.demander
+            },
+            get: {
+                earlyInputType: atom,
+                beh: resource.monitor
+            }
+        };
+    }
+    function ruleReplace( oldVal, newVal, cooldownMillis ) {
+        return [ "replace",
+            JSON.stringify( [ oldVal, newVal, cooldownMillis ] ) ];
+    }
+    function ruleRangeAdd( oldMin, oldMax, inc, cooldownMillis ) {
+        return [ "rangeAdd", JSON.stringify(
+            [ oldMin, oldMax, inc, cooldownMillis ] ) ];
+    }
+    
+    var shapesDeMon = makeDeMonCaps();
+    var drummerAnim = makeInt32AnimatedStateCaps();
+    var sprinterAnim = makeInt32AnimatedStateCaps();
+    var wasdXAnim = makeInt32AnimatedStateCaps();
+    var wasdYAnim = makeInt32AnimatedStateCaps();
+    
+    var KEYS = {
+        a: 65,
+        d: 68,
+        s: 83,
+        w: 87
+    };
+    
+    runLambdaLangConvenient( [ 1 ], {
+        keyboard: {
+            earlyInputType: atom,
+            beh: behEventfulSource( {
+                apologyVal: JSON.stringify( [] ),
+                listenOnUpdate: function ( listener ) {
+                    var keysObj = {};
+                    var keysArr = [];
+                    
+                    function keyCode( event ) {
+                        return event.which ||
+                            event.keyCode;  // IE
+                    }
+                    
+                    _.appendDom( window, { keydown: function ( e ) {
+                        var key = keyCode( e );
+                        if ( keysObj[ key ] )
+                            return;
+                        keysObj[ key ] = true;
+                        keysArr.push( key );
+                        listener( JSON.stringify( keysArr ) );
+                    } } );
+                    _.appendDom( window, { keyup: function ( e ) {
+                        var key = keyCode( e );
+                        if ( !keysObj[ key ] )
+                            return;
+                        delete keysObj[ key ];
+                        keysArr = _.arrKeep( keysArr, function ( k ) {
+                            return k !== key;
+                        } );
+                        listener( JSON.stringify( keysArr ) );
+                    } } );
+                },
+                intervalMillis: 1,
+                stabilityMillis: 6
+            } )
+        },
+        mouse: {
+            earlyInputType: atom,
+            beh: behMouseQuery( {
+                intervalMillis: 1,
+                // NOTE: This setting makes the biggest difference for
+                // the responsiveness of the interface. At 10 ms, it's
+                // noticeably laggier than canvas-control-group.html.
+                // At 4 ms, it noticeably flickers due to all the gaps
+                // of inactivity.
+                // TODO: Since this is likely to have a slightly
+                // different optimal value depending on the 
+                stabilityMillis: 6
+            } )
+        },
+        showShape: shapesDeMon.put,
+        shapesDeMonGet: shapesDeMon.get,
+        drummerAnimPut: drummerAnim.put,
+        drummerAnimGet: drummerAnim.get,
+        sprinterAnimPut: sprinterAnim.put,
+        sprinterAnimGet: sprinterAnim.get,
+        wasdXAnimPut: wasdXAnim.put,
+        wasdXAnimGet: wasdXAnim.get,
+        wasdYAnimPut: wasdYAnim.put,
+        wasdYAnimGet: wasdYAnim.get,
+        putShapesOnCanvas: {
+            earlyInputType: atom,
+            beh: behEventfulTarget( { onUpdate:
+                function ( maybeShapes ) {
+                
+                latestShapes = maybeShapes === null ? [] : _.arrMap(
+                    _.arrMap( maybeShapes.val, function ( shape ) {
+                        return JSON.parse( shape );
+                    } ).sort( function ( a, b ) {
+                        // Sort the shapes by z-index.
+                        // TODO: See what we should do if two shapes
+                        // have the same z-index.
+                        return a[ 0 ] - b[ 0 ];
+                    } ),
+                    function ( shape ) {
+                        // Take off the z-index information.
+                        return shape[ 1 ];
+                    }
+                );
+                
+                if ( !drawNecessary )
+                    requestAnimationFrame( draw );
+                drawNecessary = true;
+            } } )
+        }
+    }, function ( $, d, v, addAgents ) {
+        var a = v.appActivity.v;
+        function from1( a, expr ) {
+            return $.fst( typeOne(), $.times( a, expr ) );
+        }
+        function usef( func, expr ) {
+            return $.useBeh( behFmap( func ), expr );
+        }
+        function usejf( func, expr ) {
+            return usef( function ( input ) {
+                return JSON.stringify( func( JSON.parse( input ) ) );
+            }, expr );
+        }
+        function dk( val, activity ) {
+            // The name "dk" stands for "derived constant."
+            return usef( _.kfn( val ), activity );
+        }
+        function k( val ) {
+            // The name "k" stands for "constant."
+            return dk( val, a );
+        }
+        function djk( val, activity ) {
+            // The name "djk" stands for "derived JSON constant."
+            return dk( JSON.stringify( val ), activity );
+        }
+        function jk( val ) {
+            // The name "jk" stands for "JSON constant."
+            return djk( val, a );
+        }
+        function addVoidAgents( var_args ) {
+            addAgents.apply( {},
+                _.arrMap( arguments, function ( expr ) {
+                    return d.e01( from1( a, expr ) );
+                } ) );
+        }
+        function jzipTimes( first, second ) {
+            return usef( function ( pair ) {
+                return JSON.stringify( [
+                    JSON.parse( pair[ 0 ] ),
+                    JSON.parse( pair[ 1 ] ) ] );
+            }, $.zipTimes( first, second ) );
+        }
+        function allAdd( increment, cooldownMillis ) {
+            return ruleRangeAdd(
+                -0x80000000 - Math.min( 0, increment ),
+                0x7FFFFFFF - Math.max( 0, increment ),
+                increment,
+                cooldownMillis );
+        }
+        addVoidAgents(
+            v.putShapesOnCanvas.c0( v.shapesDeMonGet.c0( a ) ),
+            
+            v.showShape.c1( usejf( function ( mouse ) {
+                if ( mouse === null )
+                    mouse = [ 0, 0 ];
+                return [ 0,
+                    [ "rect", "#FFFFFF",
+                        [ "viewport",
+                            mouse[ 0 ] - 10, mouse[ 1 ] - 10 ],
+                        20, 20 ] ];
+            }, d.e01( v.mouse.c0( a ) ) ) ),
+            
+            v.showShape.c0(
+                jk(
+                    [ 0,
+                        [ "rect", "#FFFFFF",
+                            [ "viewport", 130, 180 ],
+                            5, 5 ] ] ) ),
+            
+            v.drummerAnimPut.c0( k( ruleReplace( 0, 1, 300 ) ) ),
+            v.drummerAnimPut.c0( k( ruleReplace( 1, 2, 300 ) ) ),
+            v.drummerAnimPut.c0( k( ruleReplace( 2, 0, 300 ) ) ),
+            v.showShape.c0( usejf( function ( animState ) {
+                return [ 0,
+                    [ "rect", "#FFFFFF",
+                        [ "viewport", 80 + (animState * 20), 150 ],
+                        5, 5 ] ];
+            }, v.drummerAnimGet.c0( a ) ) ),
+            
+            $.letPlus(
+                $.useBeh( behSplit(), usef( function ( animState ) {
+                    return JSON.parse( animState ) === 0 ?
+                        [ "<", [] ] : [ ">", [] ];
+                }, v.drummerAnimGet.c0( a ) ) ),
+                typePlus( atom, atom ),
+                // NOTE: It's interesting that we actually have to
+                // thread the activity of these branches through our
+                // computation in order to mask the side effects, but
+                // it makes sense.
+                "then", v.showShape.c0(
+                    djk(
+                        [ 0,
+                            [ "rect", "#FFFFFF",
+                                [ "viewport", 40, 150 ],
+                                5, 5 ] ],
+                        $.va( "then" ) ) ),
+                "else", v.showShape.c0(
+                    djk(
+                        [ 0,
+                            [ "rect", "#FFFFFF",
+                                [ "viewport", 50, 150 ],
+                                5, 5 ] ],
+                        $.va( "else" ) ) )
+            ),
+            
+            v.sprinterAnimPut.c0( usef( function ( animState ) {
+                return allAdd(
+                    3 * (JSON.parse( animState ) - 1), 50 );
+            }, v.drummerAnimGet.c0( a ) ) ),
+            v.showShape.c0( usejf( function ( animState ) {
+                return [ 0,
+                    [ "rect", "#FFFFFF",
+                        [ "viewport", 80 + animState, 130 ],
+                        5, 5 ] ];
+            }, v.sprinterAnimGet.c0( a ) ) ),
+            
+            v.wasdXAnimPut.c0( usef( function ( keys ) {
+                var keysObj = {};
+                _.arrEach( JSON.parse( keys ), function ( key ) {
+                    keysObj[ key ] = true;
+                } );
+                var dir = (keysObj[ KEYS.d ] ? 1 : 0) -
+                    (keysObj[ KEYS.a ] ? 1 : 0);
+                if ( dir === -1 )
+                    return allAdd( -3, 50 );
+                else if ( dir === 1 )
+                    return allAdd( 3, 50 );
+                else
+                    return [];
+                // TODO: Instead of returning the invalid rule [],
+                // don't apply any rule at all.
+            }, v.keyboard.c0( a ) ) ),
+            v.wasdYAnimPut.c0( usef( function ( keys ) {
+                var keysObj = {};
+                _.arrEach( JSON.parse( keys ), function ( key ) {
+                    keysObj[ key ] = true;
+                } );
+                var dir = (keysObj[ KEYS.s ] ? 1 : 0) -
+                    (keysObj[ KEYS.w ] ? 1 : 0);
+                if ( dir === -1 )
+                    return allAdd( -3, 50 );
+                else if ( dir === 1 )
+                    return allAdd( 3, 50 );
+                else
+                    return [];
+                // TODO: Instead of returning the invalid rule [],
+                // don't apply any rule at all.
+            }, v.keyboard.c0( a ) ) ),
+            v.showShape.c0( usejf( function ( animState ) {
+                return [ 0,
+                    [ "rect", "#FFFFFF",
+                        [ "viewport",
+                            80 + animState[ 0 ],
+                            200 + animState[ 1 ] ],
+                        5, 5 ] ];
+            }, jzipTimes(
+                v.wasdXAnimGet.c0( a ), v.wasdYAnimGet.c0( a ) ) ) ),
+            
+            $.one()
+        );
+    } );
+    
+    _.appendDom( _.el( "demo" ), canvas );
+} } );
+</script>
+</head>
+<body>
+<h3>Platformer</h3>
+<div id="demo"></div>
+<p>TODO: Actually make this into a platformer game.</p>
+<p>TODO: Put a description here.</p>
+</body>
+</html>
