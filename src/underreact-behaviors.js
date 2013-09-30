@@ -2290,31 +2290,33 @@ function behAnimatedState( defer, initialState, transitions ) {
         var outSig = outSigs.leafInfo;
         
         inSig.readEachEntry( function ( entry ) {
-            function relyOnOtherDemanders() {
+            
+            if ( entEnd( entry ) < updaterHistoryEndMillis ) {
                 outSig.history.addEntry( {
                     maybeData: { val: "" },
                     startMillis: entry.startMillis,
                     maybeEndMillis: entry.maybeEndMillis
                 } );
+                return;
             }
             
-            if ( entEnd( entry ) < updaterHistoryEndMillis )
-                return void relyOnOtherDemanders();
-            
-            if ( entry.startMillis < updaterHistoryEndMillis ) {
-                if ( updaterHistoryEndMillis === null )
-                    outSig.history.addEntry( {
-                        maybeData: null,
-                        startMillis: entry.startMillis,
-                        maybeEndMillis: null
-                    } );
-                else
-                    outSig.history.addEntry( {
-                        maybeData: { val: "" },
-                        startMillis: entry.startMillis,
-                        maybeEndMillis:
-                            { val: updaterHistoryEndMillis }
-                    } );
+            if ( updaterHistoryEndMillis === 1 / 0 ) {
+                outSig.history.addEntry( {
+                    maybeData: null,
+                    startMillis: entry.startMillis,
+                    maybeEndMillis: null
+                } );
+                
+            } else if (
+                entry.startMillis < updaterHistoryEndMillis ) {
+                
+                outSig.history.addEntry( {
+                    maybeData: { val: "" },
+                    startMillis: entry.startMillis,
+                    maybeEndMillis:
+                        { val: updaterHistoryEndMillis }
+                } );
+                
             } else if (
                 updaterHistoryEndMillis < entry.startMillis ) {
                 
@@ -2345,9 +2347,7 @@ function behAnimatedState( defer, initialState, transitions ) {
                     return transitions[ "" + rule[ 0 ] ].call( {},
                         rule[ 1 ] );
                 } );
-            while ( true ) {
-                if ( entEnd( entry ) < updaterHistoryEndMillis )
-                    return void relyOnOtherDemanders();
+            while ( updaterHistoryEndMillis < entEnd( entry ) ) {
                 var currentRules =
                     _.arrMappend( rules, function ( rule ) {
                         var replacement = rule( currentVal );
@@ -2387,7 +2387,10 @@ function behAnimatedState( defer, initialState, transitions ) {
                     return;
                 }
                 
-                var favoriteRule = _.arrFoldl(
+                var favoriteRule = 0 < currentCooldownMillis ? {
+                    newVal: currentVal,
+                    cooldownMillis: currentCooldownMillis
+                } : _.arrFoldl(
                     currentRules[ 0 ],
                     _.arrCut( currentRules, 1 ),
                     function ( a, b ) {
@@ -2398,10 +2401,12 @@ function behAnimatedState( defer, initialState, transitions ) {
                     } );
                 
                 currentVal = favoriteRule.newVal;
+                currentCooldownMillis = favoriteRule.cooldownMillis;
                 
                 var nextUpdaterHistoryEndMillis =
-                    updaterHistoryEndMillis +
-                        favoriteRule.cooldownMillis;
+                    Math.min( entEnd( entry ),
+                        updaterHistoryEndMillis +
+                            currentCooldownMillis );
                 outSig.history.addEntry( {
                     maybeData: { val: JSON.stringify( currentVal ) },
                     startMillis: updaterHistoryEndMillis,
