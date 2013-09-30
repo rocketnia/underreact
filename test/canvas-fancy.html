@@ -140,8 +140,80 @@ _.appendDom( window, { load: function () {
         };
     }
     
-    function makeAnimatedStateCaps() {
-        var resource = behAnimatedState( customDefer );
+    function makeInt32AnimatedStateCaps() {
+        
+        // We validate each entry and just filter it out if it's
+        // invalid. Specifically, it must be one of the following:
+        //
+        // - A four-element Array containing the string "replace", a
+        //   signed 32-bit int, a signed 32-bit int, and a positive
+        //   integer duration in milliseconds.
+        //
+        // - A five-element Array containing the string "rangeAdd", a
+        //   signed 32-bit int lower bound (inclusive), a signed
+        //   32-bit int upper bound (inclusive), a signed 32-bit int
+        //   which can be added to any int in that range without
+        //   overflowing, and a positive integer duration in
+        //   milliseconds. The lower bound must be less than or equal
+        //   to the upper bound.
+        
+        // TODO: Find a more elegant approach using modulo arithmetic.
+        
+        function isState( x ) {
+            return x === ~~x;
+        }
+        function isIncrement( x ) {
+            return x === ~~x;
+        }
+        function isIntDuration( x ) {
+            return isValidDuration( x ) && x % 1 === 0;
+        }
+        
+        var resource = behAnimatedState( customDefer, 0, {
+            replace: function ( rule ) {
+                rule = JSON.parse( rule );
+                if ( !(true
+                    && _.likeArray( rule )
+                    && rule.length === 3
+                    && isState( rule[ 0 ] )
+                    && isState( rule[ 1 ] )
+                    && isIntDuration( rule[ 2 ] )
+                ) )
+                    return [];
+                return [ function ( oldVal ) {
+                    if ( oldVal !== rule[ 0 ] )
+                        return null;
+                    return {
+                        newVal: rule[ 1 ],
+                        cooldownMillis: rule[ 2 ]
+                    };
+                } ];
+            },
+            rangeAdd: function ( rule ) {
+                rule = JSON.parse( rule );
+                if ( !(true
+                    && _.likeArray( rule )
+                    && rule.length === 4
+                    && isState( rule[ 0 ] )
+                    && isState( rule[ 1 ] )
+                    && rule[ 0 ] <= rule[ 1 ]
+                    && isIncrement( rule[ 2 ] )
+                    && isState( rule[ 0 ] + rule[ 2 ] )
+                    && isState( rule[ 1 ] + rule[ 2 ] )
+                    && isIntDuration( rule[ 3 ] )
+                ) )
+                    return [];
+                return [ function ( oldVal ) {
+                    if ( !(rule[ 0 ] <= oldVal
+                        && oldVal <= rule[ 1 ]) )
+                        return null;
+                    return {
+                        newVal: oldVal + rule[ 2 ],
+                        cooldownMillis: rule[ 3 ]
+                    };
+                } ];
+            }
+        } );
         return {
             put: {
                 earlyInputType: atom,
@@ -153,12 +225,20 @@ _.appendDom( window, { load: function () {
             }
         };
     }
+    function ruleReplace( oldVal, newVal, cooldownMillis ) {
+        return [ "replace",
+            JSON.stringify( [ oldVal, newVal, cooldownMillis ] ) ];
+    }
+    function ruleRangeAdd( oldMin, oldMax, inc, cooldownMillis ) {
+        return [ "rangeAdd", JSON.stringify(
+            [ oldMin, oldMax, inc, cooldownMillis ] ) ];
+    }
     
     var rectsDeMon = makeDeMonCaps();
-    var drummerAnim = makeAnimatedStateCaps();
-    var sprinterAnim = makeAnimatedStateCaps();
-    var wasdXAnim = makeAnimatedStateCaps();
-    var wasdYAnim = makeAnimatedStateCaps();
+    var drummerAnim = makeInt32AnimatedStateCaps();
+    var sprinterAnim = makeInt32AnimatedStateCaps();
+    var wasdXAnim = makeInt32AnimatedStateCaps();
+    var wasdYAnim = makeInt32AnimatedStateCaps();
     
     var KEYS = {
         a: 65,
@@ -253,10 +333,20 @@ _.appendDom( window, { load: function () {
             }, expr );
         }
         function dk( val, activity ) {
-            return usef( _.kfn( JSON.stringify( val ) ), activity );
+            // The name "dk" stands for "derived constant."
+            return usef( _.kfn( val ), activity );
         }
         function k( val ) {
+            // The name "k" stands for "constant."
             return dk( val, a );
+        }
+        function djk( val, activity ) {
+            // The name "djk" stands for "derived JSON constant."
+            return dk( JSON.stringify( val ), activity );
+        }
+        function jk( val ) {
+            // The name "jk" stands for "JSON constant."
+            return djk( val, a );
         }
         function addVoidAgents( var_args ) {
             addAgents.apply( {},
@@ -272,11 +362,11 @@ _.appendDom( window, { load: function () {
             }, $.zipTimes( first, second ) );
         }
         function allAdd( increment, cooldownMillis ) {
-            return [ "rangeAdd",
+            return ruleRangeAdd(
                 -0x80000000 - Math.min( 0, increment ),
                 0x7FFFFFFF - Math.max( 0, increment ),
                 increment,
-                cooldownMillis ];
+                cooldownMillis );
         }
         addVoidAgents(
             v.putRectsOnCanvas.c0( v.rectsDeMonGet.c0( a ) ),
@@ -288,11 +378,11 @@ _.appendDom( window, { load: function () {
                     20, 20 ];
             }, d.e01( v.mouse.c0( a ) ) ) ),
             
-            v.showRect.c0( k( [ 130, 180, 5, 5 ] ) ),
+            v.showRect.c0( jk( [ 130, 180, 5, 5 ] ) ),
             
-            v.drummerAnimPut.c0( k( [ "replace", 0, 1, 300 ] ) ),
-            v.drummerAnimPut.c0( k( [ "replace", 1, 2, 300 ] ) ),
-            v.drummerAnimPut.c0( k( [ "replace", 2, 0, 300 ] ) ),
+            v.drummerAnimPut.c0( k( ruleReplace( 0, 1, 300 ) ) ),
+            v.drummerAnimPut.c0( k( ruleReplace( 1, 2, 300 ) ) ),
+            v.drummerAnimPut.c0( k( ruleReplace( 2, 0, 300 ) ) ),
             v.showRect.c0( usejf( function ( animState ) {
                 return [ 80 + (animState * 20), 150, 5, 5 ];
             }, v.drummerAnimGet.c0( a ) ) ),
@@ -308,21 +398,22 @@ _.appendDom( window, { load: function () {
                 // computation in order to mask the side effects, but
                 // it makes sense.
                 "then", v.showRect.c0(
-                    dk( [ 40, 150, 5, 5 ], $.va( "then" ) ) ),
+                    djk( [ 40, 150, 5, 5 ], $.va( "then" ) ) ),
                 "else", v.showRect.c0(
-                    dk( [ 50, 150, 5, 5 ], $.va( "else" ) ) )
+                    djk( [ 50, 150, 5, 5 ], $.va( "else" ) ) )
             ),
             
-            v.sprinterAnimPut.c0( usejf( function ( animState ) {
-                return allAdd( 3 * (animState - 1), 50 );
+            v.sprinterAnimPut.c0( usef( function ( animState ) {
+                return allAdd(
+                    3 * (JSON.parse( animState ) - 1), 50 );
             }, v.drummerAnimGet.c0( a ) ) ),
             v.showRect.c0( usejf( function ( animState ) {
                 return [ 80 + animState, 130, 5, 5 ];
             }, v.sprinterAnimGet.c0( a ) ) ),
             
-            v.wasdXAnimPut.c0( usejf( function ( keys ) {
+            v.wasdXAnimPut.c0( usef( function ( keys ) {
                 var keysObj = {};
-                _.arrEach( keys, function ( key ) {
+                _.arrEach( JSON.parse( keys ), function ( key ) {
                     keysObj[ key ] = true;
                 } );
                 var dir = (keysObj[ KEYS.d ] ? 1 : 0) -
@@ -336,9 +427,9 @@ _.appendDom( window, { load: function () {
                 // TODO: Instead of returning the invalid rule [],
                 // don't apply any rule at all.
             }, v.keyboard.c0( a ) ) ),
-            v.wasdYAnimPut.c0( usejf( function ( keys ) {
+            v.wasdYAnimPut.c0( usef( function ( keys ) {
                 var keysObj = {};
-                _.arrEach( keys, function ( key ) {
+                _.arrEach( JSON.parse( keys ), function ( key ) {
                     keysObj[ key ] = true;
                 } );
                 var dir = (keysObj[ KEYS.s ] ? 1 : 0) -

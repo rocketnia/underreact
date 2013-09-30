@@ -2263,12 +2263,12 @@ function behDemandMonitor( defer ) {
 // TODO: This currently returns a demander behavior and a monitor
 // behavior. Return a resource control behavior of some sort as well.
 //
-function behAnimatedState( defer ) {
+function behAnimatedState( defer, initialState, transitions ) {
     
     var deMonIn = behDemandMonitor( defer );
     var deMonOut = behDemandMonitor( defer );
     
-    var currentVal = 0;
+    var currentVal = initialState;
     var nextUpdateMillis = -1 / 0;
     
     // TODO: Whoops, this behavior doesn't preserve duration coupling.
@@ -2304,80 +2304,16 @@ function behAnimatedState( defer ) {
                 nextUpdateMillis = entry.startMillis;
             
             var rules = entry.maybeData === null ? [] :
-                _.arrMappend( entry.maybeData.val,
-                    function ( ruleJson ) {
-                    
-                    // We validate each entry and just filter it out
-                    // if it's invalid. Specifically, it must be one
-                    // of the following:
-                    //
-                    // - A four-element Array containing the string
-                    //   "replace", a signed 32-bit int, a signed
-                    //   32-bit int, and a positive integer duration
-                    //   in milliseconds.
-                    //
-                    // - A five-element Array containing the string
-                    //   "rangeAdd", a signed 32-bit int lower bound
-                    //   (inclusive), a signed 32-bit int upper bound
-                    //   (inclusive), a signed 32-bit int which can be
-                    //   added to any int in that range without
-                    //   overflowing, and a positive integer duration
-                    //   in milliseconds. The lower bound must be less
-                    //   than or equal to the upper bound.
-                    
-                    // TODO: Find a more elegant approach using modulo
-                    // arithmetic.
-                    
-                    function isState( x ) {
-                        return x === ~~x;
-                    }
-                    function isIncrement( x ) {
-                        return x === ~~x;
-                    }
-                    function isIntDuration( x ) {
-                        return isValidDuration( x ) && x % 1 === 0;
-                    }
-                    
-                    var rule = JSON.parse( ruleJson );
-                    if ( true
+                _.arrMappend( entry.maybeData.val, function ( rule ) {
+                    if ( !(true
                         && _.likeArray( rule )
-                        && rule.length === 4
-                        && rule[ 0 ] === "replace"
-                        && isState( rule[ 1 ] )
-                        && isState( rule[ 2 ] )
-                        && isIntDuration( rule[ 3 ] )
-                    )
-                        return [ function ( oldVal ) {
-                            if ( oldVal !== rule[ 1 ] )
-                                return null;
-                            return {
-                                newVal: rule[ 2 ],
-                                cooldownMillis: rule[ 3 ]
-                            };
-                        } ];
-                    else if ( true
-                        && _.likeArray( rule )
-                        && rule.length === 5
-                        && rule[ 0 ] === "rangeAdd"
-                        && isState( rule[ 1 ] )
-                        && isState( rule[ 2 ] )
-                        && rule[ 1 ] <= rule[ 2 ]
-                        && isIncrement( rule[ 3 ] )
-                        && isState( rule[ 1 ] + rule[ 3 ] )
-                        && isState( rule[ 2 ] + rule[ 3 ] )
-                        && isIntDuration( rule[ 4 ] )
-                    )
-                        return [ function ( oldVal ) {
-                            if ( !(rule[ 1 ] <= oldVal
-                                && oldVal <= rule[ 2 ]) )
-                                return null;
-                            return {
-                                newVal: oldVal + rule[ 3 ],
-                                cooldownMillis: rule[ 4 ]
-                            };
-                        } ];
-                    else
+                        && rule.length === 2
+                        && _.isString( rule[ 0 ] )
+                        && _.hasOwn( transitions, "" + rule[ 0 ] )
+                    ) )
                         return [];
+                    return transitions[ "" + rule[ 0 ] ].call( {},
+                        rule[ 1 ] );
                 } );
             while ( true ) {
                 if ( entEnd( entry ) < nextUpdateMillis )
