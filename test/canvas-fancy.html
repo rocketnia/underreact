@@ -464,6 +464,14 @@ _.appendDom( window, { load: function () {
 <p>Above, observe several things:</p>
 <ul>
   
+<!--
+TODO: Figure out why the sprinterAnim dot drifts away from its
+starting position when the app activity signal has lulls (e.g. when
+moving to another tab and back). Do animated state resources continue
+to advance during times of inactivity, even though we recently tried
+to fix that? Does the monitor of a demand monitor violate duration
+coupling?
+-->
   <li>A dot that moves left, rests, moves right, and repeats.</li>
   <li>A dot that appears in one place, appears further to the right,
     rests, and repeats. (This dot tests conditional branching.)</li>

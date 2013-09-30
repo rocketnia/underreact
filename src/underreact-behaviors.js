@@ -2269,7 +2269,14 @@ function behAnimatedState( defer, initialState, transitions ) {
     var deMonOut = behDemandMonitor( defer );
     
     var currentVal = initialState;
-    var nextUpdateMillis = -1 / 0;
+    var updaterHistoryEndMillis = -1 / 0;
+    var currentCooldownMillis = 0;
+    function advanceUpdaterHistoryEndMillis( newMillis ) {
+        newMillis = Math.max( newMillis, updaterHistoryEndMillis );
+        currentCooldownMillis -=
+            newMillis - updaterHistoryEndMillis;
+        updaterHistoryEndMillis = newMillis;
+    }
     
     // TODO: Whoops, this behavior doesn't preserve duration coupling.
     // See if there's another way to do this that does. Fortunately,
@@ -2291,17 +2298,40 @@ function behAnimatedState( defer, initialState, transitions ) {
                 } );
             }
             
-            if ( entEnd( entry ) < nextUpdateMillis )
+            if ( entEnd( entry ) < updaterHistoryEndMillis )
                 return void relyOnOtherDemanders();
             
-            if ( entry.startMillis < nextUpdateMillis )
+            if ( entry.startMillis < updaterHistoryEndMillis ) {
+                if ( updaterHistoryEndMillis === null )
+                    outSig.history.addEntry( {
+                        maybeData: null,
+                        startMillis: entry.startMillis,
+                        maybeEndMillis: null
+                    } );
+                else
+                    outSig.history.addEntry( {
+                        maybeData: { val: "" },
+                        startMillis: entry.startMillis,
+                        maybeEndMillis:
+                            { val: updaterHistoryEndMillis }
+                    } );
+            } else if (
+                updaterHistoryEndMillis < entry.startMillis ) {
+                
+                // NOTE: This case happens once, at the very
+                // beginning of the app. (We do this sanity check to
+                // make sure that's actually true.)
+                if ( updaterHistoryEndMillis !== -1 / 0 )
+                    throw new Error();
+                
+                updaterHistoryEndMillis = entry.startMillis;
                 outSig.history.addEntry( {
-                    maybeData: { val: "" },
-                    startMillis: entry.startMillis,
-                    maybeEndMillis: { val: nextUpdateMillis }
+                    maybeData: { val: JSON.stringify( currentVal ) },
+                    startMillis:
+                        outSig.history.getLastEntry().startMillis,
+                    maybeEndMillis: { val: updaterHistoryEndMillis }
                 } );
-            else
-                nextUpdateMillis = entry.startMillis;
+            }
             
             var rules = entry.maybeData === null ? [] :
                 _.arrMappend( entry.maybeData.val, function ( rule ) {
@@ -2316,7 +2346,7 @@ function behAnimatedState( defer, initialState, transitions ) {
                         rule[ 1 ] );
                 } );
             while ( true ) {
-                if ( entEnd( entry ) < nextUpdateMillis )
+                if ( entEnd( entry ) < updaterHistoryEndMillis )
                     return void relyOnOtherDemanders();
                 var currentRules =
                     _.arrMappend( rules, function ( rule ) {
@@ -2326,17 +2356,17 @@ function behAnimatedState( defer, initialState, transitions ) {
                     } );
                 
                 if ( currentRules.length === 0 ) {
-                    // TODO: See if this should reset the state to
-                    // zero instead of prolonging the current state.
-                    // After all, if this state resource is to be a
+                    // TODO: See if this should reset the state
+                    // instead of prolonging the current state. After
+                    // all, if this state resource is to be a
                     // discoverable resource, there oughta be some
-                    // justification as to why it started at zero. On
-                    // the other hand, if this is to be a persistent
-                    // resource, we'll actually want it to start in a
-                    // nonzero state, representing the previously
-                    // stored value.
-                    nextUpdateMillis =
-                        Math.max( nextUpdateMillis, entEnd( entry ) );
+                    // justification as to why it started at its
+                    // initial value. On the other hand, if this is to
+                    // be a persistent resource, we'll actually want
+                    // it to start in a state other than its
+                    // designated initial state sometimes, since this
+                    // other state represents the previously persisted
+                    // value.
                     outSig.history.addEntry( {
                         maybeData:
                             entry.maybeEndMillis === null ? null :
@@ -2344,6 +2374,16 @@ function behAnimatedState( defer, initialState, transitions ) {
                         startMillis: entry.startMillis,
                         maybeEndMillis: entry.maybeEndMillis
                     } );
+                    
+                    // NOTE: We don't let inactivity satisfy the
+                    // cooldown. That helps keep this state resource
+                    // deterministic even if there are pauses in the
+                    // app activity signal.
+                    if ( entry.maybeData === null )
+                        updaterHistoryEndMillis = entEnd( entry );
+                    else
+                        advanceUpdaterHistoryEndMillis(
+                            entEnd( entry ) );
                     return;
                 }
                 
@@ -2357,16 +2397,19 @@ function behAnimatedState( defer, initialState, transitions ) {
                             b;
                     } );
                 
-                var prevUpdateMillis = nextUpdateMillis;
-                
                 currentVal = favoriteRule.newVal;
-                nextUpdateMillis += favoriteRule.cooldownMillis;
                 
+                var nextUpdaterHistoryEndMillis =
+                    updaterHistoryEndMillis +
+                        favoriteRule.cooldownMillis;
                 outSig.history.addEntry( {
                     maybeData: { val: JSON.stringify( currentVal ) },
-                    startMillis: prevUpdateMillis,
-                    maybeEndMillis: { val: nextUpdateMillis }
+                    startMillis: updaterHistoryEndMillis,
+                    maybeEndMillis:
+                        { val: nextUpdaterHistoryEndMillis }
                 } );
+                advanceUpdaterHistoryEndMillis(
+                    nextUpdaterHistoryEndMillis );
             }
         } );
     };
