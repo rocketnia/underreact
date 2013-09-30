@@ -2263,7 +2263,8 @@ function behDemandMonitor( defer ) {
 // TODO: This currently returns a demander behavior and a monitor
 // behavior. Return a resource control behavior of some sort as well.
 //
-function behAnimatedState( defer, initialState, transitions ) {
+function behAnimatedState(
+    defer, initialState, compareStates, transitions ) {
     
     var deMonIn = behDemandMonitor( defer );
     var deMonOut = behDemandMonitor( defer );
@@ -2394,8 +2395,10 @@ function behAnimatedState( defer, initialState, transitions ) {
                     currentRules[ 0 ],
                     _.arrCut( currentRules, 1 ),
                     function ( a, b ) {
-                        return a.newVal < b.newVal ? a :
-                            b.newVal < a.newVal ? b :
+                        var comparedStates =
+                            compareStates( a.newVal, b.newVal );
+                        return comparedStates < 0 ? a :
+                            0 < comparedStates ? b :
                             a.cooldownMillis < b.cooldownMillis ? a :
                             b;
                     } );

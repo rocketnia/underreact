@@ -169,7 +169,11 @@ _.appendDom( window, { load: function () {
             return isValidDuration( x ) && x % 1 === 0;
         }
         
-        var resource = behAnimatedState( customDefer, 0, {
+        var resource = behAnimatedState( customDefer, 0,
+            function ( a, b ) {
+                return a < b ? -1 : b < a ? 1 : 0;
+            },
+        {
             replace: function ( rule ) {
                 rule = JSON.parse( rule );
                 if ( !(true
