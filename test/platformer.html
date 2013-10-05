@@ -138,6 +138,29 @@ _.appendDom( window, { load: function () {
     }
     requestAnimationFrame( draw );
     
+    function sortByPrim( a, b ) {
+        return a < b ? -1 : b < a ? 1 : 0;
+    }
+    function sortByMap( func, opt_thenSort ) {
+        if ( opt_thenSort === void 0 )
+            opt_thenSort = sortByPrim;
+        return function ( a, b ) {
+            return opt_thenSort( func( a ), func( b ) );
+        };
+    }
+    function sortByTrials( sorters ) {
+        // TODO: See if this will come in handy.
+        return function ( a, b ) {
+            var anyResult = _.arrAny( sorters, function ( sorter ) {
+                var thisResult = sorter( a, b );
+                if ( thisResult === 0 )
+                    return false;
+                return { val: thisResult };
+            } );
+            return anyResult ? anyResult.val : 0;
+        };
+    }
+    
     function makeDeMonCaps() {
         var resource = behDemandMonitor( customDefer );
         return {
@@ -150,6 +173,25 @@ _.appendDom( window, { load: function () {
                 beh: resource.monitor
             }
         };
+    }
+    
+    function animatedStateResourceToCaps( resource ) {
+        return {
+            put: {
+                earlyInputType: atom,
+                beh: resource.demander
+            },
+            get: {
+                earlyInputType: atom,
+                beh: resource.monitor
+            }
+        };
+    }
+    function makeAnimatedStateCaps(
+        initialState, compareStates, transitions ) {
+        
+        return animatedStateResourceToCaps( behAnimatedState(
+            customDefer, initialState, compareStates, transitions ) );
     }
     
     function makeInt32AnimatedStateCaps() {
@@ -181,11 +223,7 @@ _.appendDom( window, { load: function () {
             return isValidDuration( x ) && x % 1 === 0;
         }
         
-        var resource = behAnimatedState( customDefer, 0,
-            function ( a, b ) {
-                return a < b ? -1 : b < a ? 1 : 0;
-            },
-        {
+        return makeAnimatedStateCaps( 0, sortByPrim, {
             replace: function ( rule ) {
                 rule = JSON.parse( rule );
                 if ( !(true
@@ -230,16 +268,6 @@ _.appendDom( window, { load: function () {
                 } ];
             }
         } );
-        return {
-            put: {
-                earlyInputType: atom,
-                beh: resource.demander
-            },
-            get: {
-                earlyInputType: atom,
-                beh: resource.monitor
-            }
-        };
     }
     function ruleReplace( oldVal, newVal, cooldownMillis ) {
         return [ "replace",
@@ -251,6 +279,256 @@ _.appendDom( window, { load: function () {
     }
     
     var shapesDeMon = makeDeMonCaps();
+    var heroForcesDeMon = makeDeMonCaps();
+    var heroVolitionAnim = makeAnimatedStateCaps(
+        {
+            precedence: 0,
+            goingLeft: false,
+            goingRight: false,
+            jumping: false
+        },
+        sortByMap( function ( state ) {
+            return state.precedence;
+        } ),
+        {
+            controlAndEnv: function ( rule ) {
+                rule = JSON.parse( rule );
+                var controlLeft = rule[ 0 ];
+                var controlRight = rule[ 1 ];
+                var controlJump = rule[ 2 ];
+                var envStanding = rule[ 3 ];
+                var envJumpPropelled = rule[ 4 ];
+                return [ function ( oldVal ) {
+                    return { cooldownMillis: ~~(1000 / 30), newVal: {
+                        precedence: 0,
+                        goingLeft: controlLeft && !controlRight,
+                        goingRight: controlRight && !controlLeft,
+                        jumping: controlJump &&
+                            (envStanding ||
+                                (envJumpPropelled && oldVal.jumping))
+                    } };
+                } ];
+            }
+        } );
+    var defaultJumpPropelMillis = 500;
+    var heroKineticsAnim = makeAnimatedStateCaps(
+        {
+            precedence: 0,
+            vx: 0,
+            vy: 0,
+            centerX: 0,
+            centerY: 0,
+            naturalW: 20,
+            naturalH: 20,
+            squishW: 20,
+            squishH: 20,
+            standing: 0,
+            jumpPropelRemainingMillis: defaultJumpPropelMillis
+        },
+        sortByMap( function ( state ) {
+            return state.precedence;
+        } ),
+        {
+            applyForces: function ( rule ) {
+                
+                var forces = _.arrMap( JSON.parse( rule ),
+                    function ( force ) {
+                    
+                    if ( force[ 0 ] === "solid" )
+                        return {
+                            type: "solid",
+                            
+                            // TODO: Figure out which of these groups
+                            // to actually use in the Array
+                            // representation of this force.
+                            
+                            tlx: force[ 1 ],
+                            tly: force[ 2 ],
+                            w: force[ 3 ],
+                            h: force[ 4 ],
+                            
+                            minX: force[ 1 ],
+                            minY: force[ 2 ],
+                            maxX: force[ 1 ] + force[ 3 ],
+                            maxY: force[ 2 ] + force[ 4 ]
+                        };
+                    else if ( force[ 0 ] === "accel" )
+                        return {
+                            type: "accel",
+                            // TODO: Clarify that these are measured
+                            // in distance units per millisecond per
+                            // millisecond.
+                            x: force[ 1 ],
+                            y: force[ 2 ]
+                        };
+                    else if ( force[ 0 ] === "jump" )
+                        return {
+                            type: "jump",
+                            // TODO: Clarify that this is measured in
+                            // distance units per millisecond.
+                            vy: force[ 1 ]
+                        };
+                    else
+                        throw new Error();
+                } );
+                
+                var ax = 0;
+                var ay = 0;
+                _.arrEach( forces, function ( force ) {
+                    if ( force.type !== "accel" )
+                        return;
+                    ax += force.x;
+                    ay += force.y;
+                } );
+                
+                var jumping = false;
+                var jumpvy = 1 / 0;
+                _.arrEach( forces, function ( force ) {
+                    if ( force.type !== "jump" )
+                        return;
+                    jumping = true;
+                    jumpvy = Math.min( jumpvy, force.vy );
+                } );
+                
+                return [ function ( ov ) {
+                    
+                    var fps = 30;
+                    var dtMillis = 1000 / fps;
+                    
+                    var desiredfvx = ov.vx + ax * dtMillis;
+                    var desiredfvy = ov.vy + ay * dtMillis;
+                    if ( jumping )
+                        desiredfvy = Math.min( desiredfvy, jumpvy );
+                    var desiredmidvx = (ov.vx + desiredfvx) / 2;
+                    var desiredmidvy = (ov.vy + desiredfvy) / 2;
+                    var desiredcx =
+                        ov.centerX + (desiredmidvx * dtMillis);
+                    var desiredcy =
+                        ov.centerY + (desiredmidvy * dtMillis);
+                    
+                    var availableRect = {
+                        minX: -1 / 0,
+                        maxX: 1 / 0,
+                        minY: -1 / 0,
+                        maxY: 1 / 0
+                    };
+                    _.arrEach( forces, function ( force ) {
+                        if ( force.type !== "solid" )
+                            return;
+                        if ( desiredcx < force.minX )
+                            availableRect.maxX = Math.min(
+                                availableRect.maxX, force.minX );
+                        if ( force.maxX < desiredcx )
+                            availableRect.minX = Math.max(
+                                availableRect.minX, force.maxX );
+                        if ( desiredcy < force.minY )
+                            availableRect.maxY = Math.min(
+                                availableRect.maxY, force.minY );
+                        if ( force.maxY < desiredcy )
+                            availableRect.minY = Math.max(
+                                availableRect.minY, force.maxY );
+                    } );
+                    
+                    
+                    var finalRect = {
+                        minX: desiredcx - (ov.naturalW / 2),
+                        maxX: desiredcx + (ov.naturalW / 2),
+                        minY: desiredcy - (ov.naturalH / 2),
+                        maxY: desiredcy + (ov.naturalH / 2)
+                    };
+                    
+                    if ( availableRect.maxY - availableRect.minY <
+                        ov.naturalH ) {
+                        
+                        finalRect.minY = availableRect.minY;
+                        finalRect.maxY = availableRect.maxY;
+                        
+                    } else if (
+                        availableRect.maxY < finalRect.maxY ) {
+                        
+                        var diff =
+                            availableRect.maxY - finalRect.maxY;
+                        finalRect.minY += diff;
+                        finalRect.maxY += diff;
+                        
+                    } else if (
+                        finalRect.minY < availableRect.minY ) {
+                        
+                        var diff =
+                            availableRect.minY - finalRect.minY;
+                        finalRect.minY += diff;
+                        finalRect.maxY += diff;
+                    }
+                    
+                    if ( availableRect.maxX - availableRect.minX <
+                        ov.naturalW ) {
+                        
+                        finalRect.minX = availableRect.minX;
+                        finalRect.maxX = availableRect.maxX;
+                        
+                    } else if (
+                        availableRect.maxX < finalRect.maxX ) {
+                        
+                        var diff =
+                            availableRect.maxX - finalRect.maxX;
+                        finalRect.minX += diff;
+                        finalRect.maxX += diff;
+                        
+                    } else if (
+                        finalRect.minX < availableRect.minX ) {
+                        
+                        var diff =
+                            availableRect.minX - finalRect.minX;
+                        finalRect.minX += diff;
+                        finalRect.maxX += diff;
+                    }
+                    
+                    
+                    var actualcx =
+                        (finalRect.minX + finalRect.maxX) / 2;
+                    var actualcy =
+                        (finalRect.minY + finalRect.maxY) / 2;
+                    var actualmidvx =
+                        (actualcx - ov.centerX) / dtMillis;
+                    var actualmidvy =
+                        (actualcy - ov.centerY) / dtMillis;
+                    
+                    // NOTE: We clamp these toward zero, rather than
+                    // letting the entity bounce off walls. Even if we
+                    // didn't do this clamping, the entity's bouncing
+                    // would be erratic. It would not bounce if it
+                    // collided at exactly the same time as a frame
+                    // step, and it would bounce at 100% its original
+                    // speed if it collided halfway between frames.
+                    var actualfvx = ov.vx + (actualmidvx - ov.vx) * 2;
+                    if ( ov.vx * actualfvx < 0 )
+                        actualfvx = 0;
+                    var actualfvy = ov.vy + (actualmidvy - ov.vy) * 2;
+                    if ( ov.vy * actualfvy < 0 )
+                        actualfvy = 0;
+                    
+                    
+                    return { cooldownMillis: ~~dtMillis, newVal: {
+                        precedence: 0,
+                        vx: actualfvx,
+                        vy: actualfvy,
+                        centerX: actualcx,
+                        centerY: actualcy,
+                        naturalW: ov.naturalW,
+                        naturalH: ov.naturalH,
+                        squishW: finalRect.maxX - finalRect.minX,
+                        squishH: finalRect.maxY - finalRect.minY,
+                        standing:
+                            finalRect.maxY === availableRect.maxY,
+                        jumpPropelRemainingMillis: jumping ?
+                            Math.min( 0,
+                                ov.jumpPropelRemainingMillis -
+                                    jumping ) :
+                            defaultJumpPropelMillis
+                    } };
+                } ];
+            }
+        } );
     var drummerAnim = makeInt32AnimatedStateCaps();
     var sprinterAnim = makeInt32AnimatedStateCaps();
     var wasdXAnim = makeInt32AnimatedStateCaps();
@@ -316,6 +594,12 @@ _.appendDom( window, { load: function () {
         },
         showShape: shapesDeMon.put,
         shapesDeMonGet: shapesDeMon.get,
+        heroForcesDeMonPut: heroForcesDeMon.put,
+        heroForcesDeMonGet: heroForcesDeMon.get,
+        heroVolitionAnimPut: heroVolitionAnim.put,
+        heroVolitionAnimGet: heroVolitionAnim.get,
+        heroKineticsAnimPut: heroKineticsAnim.put,
+        heroKineticsAnimGet: heroKineticsAnim.get,
         drummerAnimPut: drummerAnim.put,
         drummerAnimGet: drummerAnim.get,
         sprinterAnimPut: sprinterAnim.put,
@@ -400,6 +684,35 @@ _.appendDom( window, { load: function () {
         }
         addVoidAgents(
             v.putShapesOnCanvas.c0( v.shapesDeMonGet.c0( a ) ),
+            
+            v.heroKineticsAnimPut.c0( usef( function ( forces ) {
+                return [ "applyForces", JSON.stringify(
+                    _.arrMap( forces, function ( force ) {
+                        return JSON.parse( force );
+                    } ) ) ];
+            }, v.heroForcesDeMonGet.c0( a ) ) ),
+            // TODO: If the hero ever moves faster than one hero
+            // radius per frame, it can move through solid objects.
+            // Only apply this acceleration if the hero is slow
+            // enough.
+            // TODO: See if we really want to use floating-point
+            // accelerations like this. This is a speed of 0.0001
+            // distance units per millisecond per millisecond, i.e. a
+            // speed of 100 distance units per second per second.
+            v.heroForcesDeMonPut.c0( jk( [ "accel", 0, 0.0001 ] ) ),
+            v.heroForcesDeMonPut.c0(
+                jk( [ "solid", 0, 100, 200, 200 ] ) ),
+            v.showShape.c0( usejf( function ( animState ) {
+                return [ 0,
+                    [ "rect", "#FFFF00",
+                        [ "viewport",
+                            100 + animState.centerX -
+                                (animState.squishW / 2),
+                            100 + animState.centerY -
+                                (animState.squishH / 2) ],
+                        animState.squishW,
+                        animState.squishH ] ];
+            }, v.heroKineticsAnimGet.c0( a ) ) ),
             
             v.showShape.c1( usejf( function ( mouse ) {
                 if ( mouse === null )

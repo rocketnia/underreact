@@ -2406,6 +2406,13 @@ function behAnimatedState(
                 currentVal = favoriteRule.newVal;
                 currentCooldownMillis = favoriteRule.cooldownMillis;
                 
+                // TODO: If we ever want to support fractional values
+                // for cooldownMillis, fix this code. It adds a very
+                // large number (updaterHistoryEndMillis) to what
+                // could be a very small fraction, and then it
+                // subtracts the difference from the cooldown (via
+                // advanceUpdaterHistoryEndMillis), rather than just
+                // setting the cooldown to zero.
                 var nextUpdaterHistoryEndMillis =
                     Math.min( entEnd( entry ),
                         updaterHistoryEndMillis +
