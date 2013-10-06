@@ -278,6 +278,24 @@ _.appendDom( window, { load: function () {
             [ oldMin, oldMax, inc, cooldownMillis ] ) ];
     }
     
+    var stableKeyboardAnim =
+        makeAnimatedStateCaps( [], sortByTrials(), {
+        
+        set: function ( newVal ) {
+            newVal = JSON.parse( newVal );
+            return [ function ( oldVal ) {
+                // TODO: Figure out what frame rate would be
+                // appropriate for the keyboard input. Perhaps we
+                // should just make a new state resource that just
+                // prolongs a state until the next valid replacement
+                // comes along. Then it'll effectively be this with a
+                // cooldown of 0, even though we can't actually use 0
+                // here without entering an infinite loop.
+                return { cooldownMillis: ~~(1000 / 30),
+                    newVal: newVal };
+            } ];
+        }
+    } );
     var shapesDeMon = makeDeMonCaps();
     var heroForcesDeMon = makeDeMonCaps();
     var heroVolitionAnim = makeAnimatedStateCaps(
@@ -310,7 +328,11 @@ _.appendDom( window, { load: function () {
                 } ];
             }
         } );
+    // TODO: Extract some of these magic numbers into a more global
+    // config location.
     var defaultJumpPropelMillis = 500;
+    var heroNaturalW = 20;
+    var heroNaturalH = 20;
     var heroKineticsAnim = makeAnimatedStateCaps(
         {
             precedence: 0,
@@ -318,10 +340,10 @@ _.appendDom( window, { load: function () {
             vy: 0,
             centerX: 0,
             centerY: 0,
-            naturalW: 20,
-            naturalH: 20,
-            squishW: 20,
-            squishH: 20,
+            naturalW: heroNaturalW,
+            naturalH: heroNaturalH,
+            squishW: heroNaturalW,
+            squishH: heroNaturalH,
             standing: 0,
             jumpPropelRemainingMillis: defaultJumpPropelMillis
         },
@@ -364,9 +386,10 @@ _.appendDom( window, { load: function () {
                     else if ( force[ 0 ] === "jump" )
                         return {
                             type: "jump",
-                            // TODO: Clarify that this is measured in
-                            // distance units per millisecond.
-                            vy: force[ 1 ]
+                            // TODO: Clarify that these are measured
+                            // in distance units per millisecond.
+                            vyDuring: force[ 1 ],
+                            vyAfterward: force[ 2 ]
                         };
                     else
                         throw new Error();
@@ -382,25 +405,36 @@ _.appendDom( window, { load: function () {
                 } );
                 
                 var jumping = false;
-                var jumpvy = 1 / 0;
+                var jumpvyDuring = 1 / 0;
+                var jumpvyAfterward = 1 / 0;
                 _.arrEach( forces, function ( force ) {
                     if ( force.type !== "jump" )
                         return;
                     jumping = true;
-                    jumpvy = Math.min( jumpvy, force.vy );
+                    // TODO: Right now these are minimum'd separately.
+                    // See if we should somehow compare them as
+                    // inseparable pairs.
+                    jumpvyDuring = Math.min( jumpvyDuring,
+                        force.vyDuring );
+                    jumpvyAfterward = Math.min( jumpvyAfterward,
+                        force.vyAfterward );
                 } );
                 
                 return [ function ( ov ) {
                     
+                    // TODO: Extract the magic number 30 into a more
+                    // global config location.
                     var fps = 30;
                     var dtMillis = 1000 / fps;
                     
                     var desiredfvx = ov.vx + ax * dtMillis;
                     var desiredfvy = ov.vy + ay * dtMillis;
-                    if ( jumping )
-                        desiredfvy = Math.min( desiredfvy, jumpvy );
                     var desiredmidvx = (ov.vx + desiredfvx) / 2;
                     var desiredmidvy = (ov.vy + desiredfvy) / 2;
+                    var velocityIsBasedOnJump =
+                        jumping && jumpvyDuring < desiredmidvy;
+                    if ( velocityIsBasedOnJump )
+                        desiredmidvy = jumpvyDuring;
                     var desiredcx =
                         ov.centerX + (desiredmidvx * dtMillis);
                     var desiredcy =
@@ -507,6 +541,13 @@ _.appendDom( window, { load: function () {
                     if ( ov.vy * actualfvy < 0 )
                         actualfvy = 0;
                     
+                    if ( velocityIsBasedOnJump )
+                        actualfvy = jumpvyAfterward;
+                    
+                    
+                    var standing =
+                        finalRect.maxY === availableRect.maxY;
+                    
                     
                     return { cooldownMillis: ~~dtMillis, newVal: {
                         precedence: 0,
@@ -518,13 +559,14 @@ _.appendDom( window, { load: function () {
                         naturalH: ov.naturalH,
                         squishW: finalRect.maxX - finalRect.minX,
                         squishH: finalRect.maxY - finalRect.minY,
-                        standing:
-                            finalRect.maxY === availableRect.maxY,
-                        jumpPropelRemainingMillis: jumping ?
-                            Math.min( 0,
-                                ov.jumpPropelRemainingMillis -
-                                    jumping ) :
-                            defaultJumpPropelMillis
+                        standing: standing,
+                        jumpPropelRemainingMillis:
+                            jumping ?
+                                Math.max( 0,
+                                    ov.jumpPropelRemainingMillis -
+                                        dtMillis ) :
+                            standing ? defaultJumpPropelMillis :
+                            0
                     } };
                 } ];
             }
@@ -541,11 +583,11 @@ _.appendDom( window, { load: function () {
         w: 87
     };
     
-    runLambdaLangConvenient( [ 1 ], {
-        keyboard: {
+    runLambdaLangConvenient( [ 1, 49 ], {
+        volatileKeyboard: {
             earlyInputType: atom,
             beh: behEventfulSource( {
-                apologyVal: JSON.stringify( [] ),
+                apologyVal: JSON.stringify( null ),
                 listenOnUpdate: function ( listener ) {
                     var keysObj = {};
                     var keysArr = [];
@@ -592,6 +634,8 @@ _.appendDom( window, { load: function () {
                 stabilityMillis: 6
             } )
         },
+        stableKeyboardAnimPut: stableKeyboardAnim.put,
+        stableKeyboard: stableKeyboardAnim.get,
         showShape: shapesDeMon.put,
         shapesDeMonGet: shapesDeMon.get,
         heroForcesDeMonPut: heroForcesDeMon.put,
@@ -641,10 +685,33 @@ _.appendDom( window, { load: function () {
         function usef( func, expr ) {
             return $.useBeh( behFmap( func ), expr );
         }
-        function usejf( func, expr ) {
+        function jzipTimesArr( arr ) {
+            return usef(
+                function ( list ) {
+                    return JSON.stringify( _.acc( function ( y ) {
+                        for (
+                            ; _.likeArray( list ); list = list[ 1 ] )
+                            y( JSON.parse( list[ 0 ] ) );
+                        y( JSON.parse( list ) );
+                    } ) );
+                },
+                _.arrFoldr(
+                    _.arrCut( arr, 0, arr.length - 1 ),
+                    arr[ arr.length - 1 ],
+                    function ( a, b ) {
+                        return $.zipTimes( a, b );
+                    }
+                )
+            );
+        }
+        function jzipTimes( var_args ) {
+            return jzipTimesArr( arguments );
+        }
+        function usejf( func, var_args ) {
             return usef( function ( input ) {
-                return JSON.stringify( func( JSON.parse( input ) ) );
-            }, expr );
+                return JSON.stringify(
+                    func.apply( {}, JSON.parse( input ) ) );
+            }, jzipTimesArr( _.arrCut( arguments, 1 ) ) );
         }
         function dk( val, activity ) {
             // The name "dk" stands for "derived constant."
@@ -665,15 +732,25 @@ _.appendDom( window, { load: function () {
         function addVoidAgents( var_args ) {
             addAgents.apply( {},
                 _.arrMap( arguments, function ( expr ) {
-                    return d.e01( from1( a, expr ) );
+                    // TODO: Stop hardcoding d.e02 here. This 2 should
+                    // always be whatever the last delay index is.
+                    return d.e02( from1( a, expr ) );
                 } ) );
         }
-        function jzipTimes( first, second ) {
-            return usef( function ( pair ) {
-                return JSON.stringify( [
-                    JSON.parse( pair[ 0 ] ),
-                    JSON.parse( pair[ 1 ] ) ] );
-            }, $.zipTimes( first, second ) );
+        function jif( condition, then, opt_els ) {
+            return $.letPlus(
+                $.useBeh( behSplit(), usef( function ( condition ) {
+                    return JSON.parse( condition ) ?
+                        [ "<", [] ] : [ ">", [] ];
+                }, condition ) ),
+                typePlus( atom, atom ),
+                // NOTE: It's interesting that we actually have to
+                // thread the activity of these branches through our
+                // computation in order to mask the side effects, but
+                // it makes sense.
+                "appActivity", then,
+                "appActivity", opt_els !== void 0 ? opt_els : $.one()
+            );
         }
         function allAdd( increment, cooldownMillis ) {
             return ruleRangeAdd(
@@ -683,6 +760,35 @@ _.appendDom( window, { load: function () {
                 cooldownMillis );
         }
         addVoidAgents(
+            $.letPlus(
+                $.useBeh( behSplit(), usef( function ( keys ) {
+                    return JSON.parse( keys ) === null ?
+                        [ "<", [] ] : [ ">", keys ];
+                }, v.volatileKeyboard.c0( a ) ) ),
+                typePlus( atom, atom ),
+                "noKeys", $.one(),
+                "keys", v.stableKeyboardAnimPut.c0( usef(
+                    function ( keys ) {
+                    
+                    if ( JSON.parse( keys ) === null )
+                        throw new Error();
+                    return [ "set", keys ];
+                }, $.va( "keys" ) ) )
+            ),
+            // TODO: Figure out why this can't replace the above
+            // letPlus. Somehow it gets to the "throw new Error();"
+            // line every time. Is it because the two uses of
+            // volatilekeyboard set up independent listeners?
+//            jif(
+//                usejf( function ( keys ) {
+//                    return keys !== null;
+//                }, v.volatileKeyboard.c0( a ) ),
+//                v.stableKeyboardAnimPut.c0( usef( function ( keys ) {
+//                    if ( keys === "null" )
+//                        throw new Error();
+//                    return [ "set", keys ];
+//                }, v.volatileKeyboard.c0( a ) ) )
+//            ),
             v.putShapesOnCanvas.c0( v.shapesDeMonGet.c0( a ) ),
             
             v.heroKineticsAnimPut.c0( usef( function ( forces ) {
@@ -691,17 +797,67 @@ _.appendDom( window, { load: function () {
                         return JSON.parse( force );
                     } ) ) ];
             }, v.heroForcesDeMonGet.c0( a ) ) ),
-            // TODO: If the hero ever moves faster than one hero
+            
+            // NOTE: If the hero ever moves faster than one hero
             // radius per frame, it can move through solid objects.
-            // Only apply this acceleration if the hero is slow
-            // enough.
-            // TODO: See if we really want to use floating-point
-            // accelerations like this. This is a speed of 0.0001
-            // distance units per millisecond per millisecond, i.e. a
-            // speed of 100 distance units per second per second.
-            v.heroForcesDeMonPut.c0( jk( [ "accel", 0, 0.0001 ] ) ),
+            // Hence, we only apply this acceleration if the hero is
+            // slow enough.
+            //
+            // TODO: Right now we have to delay the gravity force
+            // since we want it to depend on heroKineticsAnimGet,
+            // which in turn depends on the forces being applied,
+            // which depends on whether we apply the gravity force,
+            // and so on. See if we can break this cycle another way.
+            // Perhaps we should handle a max speed inside the stepper
+            // itself, so that it automatically ignores excess
+            // acceleration.
+            //
+            jif(
+                usejf( function ( kinetics ) {
+                    // TODO: Extract the magic number 30 into a more
+                    // global config location.
+                    var fps = 30;
+                    var dtMillis = 1000 / fps;
+                    // TODO: Extract the magic number 0.4 into a more
+                    // global config location.
+                    return kinetics.vy * dtMillis <
+                        heroNaturalH * 0.4;
+                }, v.heroKineticsAnimGet.c0( a ) ),
+                // TODO: See if we really want to use floating-point
+                // accelerations like this. This is a speed of 0.0001
+                // distance units per millisecond per millisecond,
+                // i.e. a speed of 100 distance units per second per
+                // second.
+                v.heroForcesDeMonPut.c2(
+                    d.e02( jk( [ "accel", 0, 0.0001 ] ) ) )
+            ),
+            
             v.heroForcesDeMonPut.c0(
                 jk( [ "solid", 0, 100, 200, 200 ] ) ),
+            
+            // TODO: Right now we have to delay the jump force since
+            // we want it to depend on heroKineticsAnimGet, which in
+            // turn depends on the forces being applied, which depends
+            // on whether we apply the jump force, and so on. See if
+            // we can break this cycle another way. Perhaps we should
+            // just check jumpPropelRemainingMillis as part of the
+            // heroKineticsAnim stepper and avoid delay altogether.
+            jif(
+                usejf(
+                    function ( keys, kinetics ) {
+                        var keysObj = {};
+                        _.arrEach( keys, function ( key ) {
+                            keysObj[ key ] = true;
+                        } );
+                        return !!keysObj[ KEYS.w ] &&
+                            0 < kinetics.jumpPropelRemainingMillis;
+                    },
+                    v.stableKeyboard.c0( a ),
+                    v.heroKineticsAnimGet.c0( a ) ),
+                v.heroForcesDeMonPut.c2(
+                    d.e02( jk( [ "jump", -0.1, -0.05 ] ) ) )
+            ),
+            
             v.showShape.c0( usejf( function ( animState ) {
                 return [ 0,
                     [ "rect", "#FFFF00",
@@ -793,7 +949,7 @@ _.appendDom( window, { load: function () {
                     return [];
                 // TODO: Instead of returning the invalid rule [],
                 // don't apply any rule at all.
-            }, v.keyboard.c0( a ) ) ),
+            }, v.stableKeyboard.c0( a ) ) ),
             v.wasdYAnimPut.c0( usef( function ( keys ) {
                 var keysObj = {};
                 _.arrEach( JSON.parse( keys ), function ( key ) {
@@ -809,7 +965,7 @@ _.appendDom( window, { load: function () {
                     return [];
                 // TODO: Instead of returning the invalid rule [],
                 // don't apply any rule at all.
-            }, v.keyboard.c0( a ) ) ),
+            }, v.stableKeyboard.c0( a ) ) ),
             v.showShape.c0( usejf( function ( animState ) {
                 return [ 0,
                     [ "rect", "#FFFFFF",
@@ -831,7 +987,9 @@ _.appendDom( window, { load: function () {
 <body>
 <h3>Platformer</h3>
 <div id="demo"></div>
-<p>TODO: Actually make this into a platformer game.</p>
-<p>TODO: Put a description here.</p>
+<p>Use the w key to jump. Try holding the key for different periods of
+  time.</p>
+<p>TODO: Actually make this into a platform game.</p>
+<p>TODO: Put a better description here.</p>
 </body>
 </html>
