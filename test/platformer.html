@@ -827,12 +827,12 @@ _.appendDom( window, { load: function () {
                         heroNaturalH * 0.4;
                 }, v.heroKineticsAnimGet.c0( a ) ),
                 // TODO: See if we really want to use floating-point
-                // accelerations like this. This is a speed of 0.0001
+                // accelerations like this. This is a speed of 0.0002
                 // distance units per millisecond per millisecond,
-                // i.e. a speed of 100 distance units per second per
+                // i.e. a speed of 200 distance units per second per
                 // second.
                 v.heroForcesDeMonPut.c2(
-                    d.e02( jk( [ "accel", 0, 0.0001 ] ) ) )
+                    d.e02( jk( [ "accel", 0, 0.0002 ] ) ) )
             ),
             
             v.heroForcesDeMonPut.c0(
