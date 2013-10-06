@@ -165,7 +165,7 @@ lambdaLang.fn = function ( argName, body ) {
     };
     result.getFreeVars = function () {
         var freeVars = body.getFreeVars().copy();
-        freeVars.del( name );
+        freeVars.del( argName );
         return freeVars;
     };
     result.compile = function (
