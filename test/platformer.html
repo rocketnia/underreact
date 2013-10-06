@@ -404,13 +404,13 @@ _.appendDom( window, { load: function () {
                     ay += force.y;
                 } );
                 
-                var jumping = false;
+                var tryingToJump = false;
                 var jumpvyDuring = 1 / 0;
                 var jumpvyAfterward = 1 / 0;
                 _.arrEach( forces, function ( force ) {
                     if ( force.type !== "jump" )
                         return;
-                    jumping = true;
+                    tryingToJump = true;
                     // TODO: Right now these are minimum'd separately.
                     // See if we should somehow compare them as
                     // inseparable pairs.
@@ -426,6 +426,9 @@ _.appendDom( window, { load: function () {
                     // global config location.
                     var fps = 30;
                     var dtMillis = 1000 / fps;
+                    
+                    var jumping = tryingToJump &&
+                        0 < ov.jumpPropelRemainingMillis;
                     
                     var desiredfvx = ov.vx + ax * dtMillis;
                     var desiredfvy = ov.vy + ay * dtMillis;
@@ -835,27 +838,16 @@ _.appendDom( window, { load: function () {
             v.heroForcesDeMonPut.c0(
                 jk( [ "solid", 0, 100, 200, 200 ] ) ),
             
-            // TODO: Right now we have to delay the jump force since
-            // we want it to depend on heroKineticsAnimGet, which in
-            // turn depends on the forces being applied, which depends
-            // on whether we apply the jump force, and so on. See if
-            // we can break this cycle another way. Perhaps we should
-            // just check jumpPropelRemainingMillis as part of the
-            // heroKineticsAnim stepper and avoid delay altogether.
             jif(
-                usejf(
-                    function ( keys, kinetics ) {
-                        var keysObj = {};
-                        _.arrEach( keys, function ( key ) {
-                            keysObj[ key ] = true;
-                        } );
-                        return !!keysObj[ KEYS.w ] &&
-                            0 < kinetics.jumpPropelRemainingMillis;
-                    },
-                    v.stableKeyboard.c0( a ),
-                    v.heroKineticsAnimGet.c0( a ) ),
-                v.heroForcesDeMonPut.c2(
-                    d.e02( jk( [ "jump", -0.1, -0.05 ] ) ) )
+                usejf( function ( keys ) {
+                    var keysObj = {};
+                    _.arrEach( keys, function ( key ) {
+                        keysObj[ key ] = true;
+                    } );
+                    return !!keysObj[ KEYS.w ];
+                }, v.stableKeyboard.c0( a ) ),
+                v.heroForcesDeMonPut.c0(
+                    jk( [ "jump", -0.1, -0.05 ] ) )
             ),
             
             v.showShape.c0( usejf( function ( animState ) {
