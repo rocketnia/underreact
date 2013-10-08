@@ -387,8 +387,7 @@ lambdaLang.zip = function ( pair ) {
         return behSeqs(
             pair.compile(
                 varInfoByIndex, varInfoByName,
-                typeTimes(
-                    typeAtom( 0, null ), typeAtom( 0, null ) ) ),
+                typeTimes( outType, outType ) ),
             behZip()
         );
     };

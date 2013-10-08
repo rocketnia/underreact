@@ -303,7 +303,10 @@ _.appendDom( window, { load: function () {
             precedence: 0,
             goingLeft: false,
             goingRight: false,
-            jumping: false
+            jumping: false,
+            // TODO: See if this should really be part of the
+            // heroVolitionAnim state.
+            recentlyJumped: false
         },
         sortByMap( function ( state ) {
             return state.precedence;
@@ -317,13 +320,16 @@ _.appendDom( window, { load: function () {
                 var envStanding = rule[ 3 ];
                 var envJumpPropelled = rule[ 4 ];
                 return [ function ( oldVal ) {
+                    var jumping = controlJump &&
+                        ((envStanding && !oldVal.recentlyJumped) ||
+                            (envJumpPropelled && oldVal.jumping));
                     return { cooldownMillis: ~~(1000 / 30), newVal: {
                         precedence: 0,
                         goingLeft: controlLeft && !controlRight,
                         goingRight: controlRight && !controlLeft,
-                        jumping: controlJump &&
-                            (envStanding ||
-                                (envJumpPropelled && oldVal.jumping))
+                        jumping: jumping,
+                        recentlyJumped: jumping ||
+                            (controlJump && oldVal.recentlyJumped)
                     } };
                 } ];
             }
@@ -586,7 +592,7 @@ _.appendDom( window, { load: function () {
         w: 87
     };
     
-    runLambdaLangConvenient( [ 1, 49 ], {
+    runLambdaLangConvenient( [ 1, 499 ], {
         volatileKeyboard: {
             earlyInputType: atom,
             beh: behEventfulSource( {
@@ -685,16 +691,39 @@ _.appendDom( window, { load: function () {
         function from1( a, expr ) {
             return $.fst( typeOne(), $.times( a, expr ) );
         }
-        function usef( func, expr ) {
+        function plainUsef( func, expr ) {
             return $.useBeh( behFmap( func ), expr );
         }
+        function zipTimesArr( arr ) {
+            var n = arr.length;
+            return plainUsef(
+                function ( list ) {
+                    return _.acc( function ( y ) {
+                        for ( var i = 0; i < n - 1; i++ ) {
+                            y( list[ 0 ] );
+                            list = list[ 1 ];
+                        }
+                        y( list );
+                    } );
+                },
+                _.arrFoldr(
+                    _.arrCut( arr, 0, arr.length - 1 ),
+                    arr[ arr.length - 1 ],
+                    function ( a, b ) {
+                        return $.zipTimes( a, b );
+                    }
+                )
+            );
+        }
         function jzipTimesArr( arr ) {
-            return usef(
+            var n = arr.length;
+            return plainUsef(
                 function ( list ) {
                     return JSON.stringify( _.acc( function ( y ) {
-                        for (
-                            ; _.likeArray( list ); list = list[ 1 ] )
+                        for ( var i = 0; i < n - 1; i++ ) {
                             y( JSON.parse( list[ 0 ] ) );
+                            list = list[ 1 ];
+                        }
                         y( JSON.parse( list ) );
                     } ) );
                 },
@@ -707,18 +736,23 @@ _.appendDom( window, { load: function () {
                 )
             );
         }
+        function usef( func, var_args ) {
+            return plainUsef( function ( input ) {
+                return func.apply( {}, input );
+            }, zipTimesArr( _.arrCut( arguments, 1 ) ) );
+        }
         function jzipTimes( var_args ) {
             return jzipTimesArr( arguments );
         }
         function usejf( func, var_args ) {
-            return usef( function ( input ) {
+            return plainUsef( function ( input ) {
                 return JSON.stringify(
                     func.apply( {}, JSON.parse( input ) ) );
             }, jzipTimesArr( _.arrCut( arguments, 1 ) ) );
         }
         function dk( val, activity ) {
             // The name "dk" stands for "derived constant."
-            return usef( _.kfn( val ), activity );
+            return plainUsef( _.kfn( val ), activity );
         }
         function k( val ) {
             // The name "k" stands for "constant."
@@ -838,14 +872,32 @@ _.appendDom( window, { load: function () {
             v.heroForcesDeMonPut.c0(
                 jk( [ "solid", 0, 100, 200, 200 ] ) ),
             
-            jif(
-                usejf( function ( keys ) {
+            v.heroVolitionAnimPut.c2( d.e02( usef(
+                function ( keys, env ) {
                     var keysObj = {};
-                    _.arrEach( keys, function ( key ) {
+                    _.arrEach( JSON.parse( keys ), function ( key ) {
                         keysObj[ key ] = true;
                     } );
-                    return !!keysObj[ KEYS.w ];
-                }, v.stableKeyboard.c0( a ) ),
+                    env = JSON.parse( env );
+                    
+                    var controlLeft = keysObj[ KEYS.a ];
+                    var controlRight = keysObj[ KEYS.d ];
+                    var controlJump = keysObj[ KEYS.w ];
+                    var envStanding = env.standing;
+                    var envJumpPropelled =
+                        0 < env.jumpPropelRemainingMillis;
+                    return [ "controlAndEnv", JSON.stringify( [
+                        controlLeft, controlRight, controlJump,
+                        envStanding, envJumpPropelled ] ) ];
+                },
+                v.stableKeyboard.c0( a ),
+                v.heroKineticsAnimGet.c0( a )
+            ) ) ),
+            
+            jif(
+                usejf( function ( volition ) {
+                    return volition.jumping;
+                }, v.heroVolitionAnimGet.c0( a ) ),
                 v.heroForcesDeMonPut.c0(
                     jk( [ "jump", -0.1, -0.05 ] ) )
             ),
