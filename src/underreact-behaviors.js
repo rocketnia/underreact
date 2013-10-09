@@ -728,6 +728,19 @@ function consumeEarliestEntries( pendingHistories, body ) {
     }
 }
 
+// TODO: See if this would come in handy in more places. Right now we
+// only use it once, and that's just an optimization.
+function consumeEarliestEntriesCapped(
+    earliestStartMillis, pendingHistories, body ) {
+    
+    _.arrEach( pendingHistories, function ( pending ) {
+        while ( pending.length !== 0
+            && entEnd( pending[ 0 ] ) <= earliestStartMillis )
+            pending.shift();
+    } );
+    consumeEarliestEntries( pendingHistories, body );
+}
+
 // TODO: See what this would be called in Sirea.
 function behLeftIntro( type ) {
     var result = {};
@@ -2091,6 +2104,25 @@ function connectMembraneToBehaviors( pairHalf, context, delayToBeh ) {
     } );
 }
 
+// TODO: See if we should keep this utilities around, and if so,
+// where.
+var debugLogForFrequencyLog = [];
+function debugLogForFrequencyGetLength() {
+    var then = new Date().getTime() - 1000;
+    while ( debugLogForFrequencyLog.length !== 0
+        && debugLogForFrequencyLog[ 0 ] < then )
+        debugLogForFrequencyLog.shift();
+    return debugLogForFrequencyLog.length;
+}
+function debugLogForFrequency() {
+    var now = new Date().getTime();
+    debugLogForFrequencyLog.push( now );
+    var then = now - 1000;
+    while ( debugLogForFrequencyLog.length !== 0
+        && debugLogForFrequencyLog[ 0 ] < then )
+        debugLogForFrequencyLog.shift();
+}
+
 // NOTE: We use a defer procedure as a parameter here, so that
 // feedback loops don't grind the entire page to a halt. However,
 // those loops will still execute forever, so be careful.
@@ -2166,13 +2198,34 @@ function behDemandMonitor( defer ) {
                 monitorPending.getAllEntries().slice();
             var consumedEndMillis = monitorEntries[ 0 ].startMillis;
             
-            consumeEarliestEntries( [ monitorEntries ].concat(
-                _.arrMap( monitorInfo.demandersPending,
+            // TODO: This part of the code sure is called a lot. It
+            // probably has to do with the fact that every demand
+            // update triggers this processPending(). We should
+            // eventually see how much redundancy we can eliminate
+            // by doing a topological sort or by using David's
+            // touch-then-propagate technique
+            // (http://lambda-the-ultimate.org/node/4453). Until then,
+            // there's still plenty of room for naive optimization
+            // here. (For instance, the next thing we can do is to
+            // exit fast if the monitor's latest active time is
+            // greater than the output history's latest time.)
+            
+            var outSigHistoryEndMillis =
+                entEnd( outSig.history.getLastEntry() );
+            // TODO: See if we should take out this debug code.
+//            if ( consumedEndMillis - outSigHistoryEndMillis <= 10 )
+//                debugLogForFrequency();
+//            sometimesLog( debugLogForFrequencyGetLength() );
+            consumeEarliestEntriesCapped(
+                outSigHistoryEndMillis,
+                [ monitorEntries ].concat( _.arrMap(
+                    monitorInfo.demandersPending,
                     function ( demanderPending ) {
                     
                     return demanderPending.getAllEntries().slice();
-                } )
-            ), function ( earliestEntries ) {
+                } ) ),
+                function ( earliestEntries ) {
+                
                 var monitorEntry = earliestEntries[ 0 ];
                 var demandEntries = _.arrCut( earliestEntries, 1 );
                 
