@@ -796,6 +796,20 @@ _.appendDom( window, { load: function () {
                 increment,
                 cooldownMillis );
         }
+        function solid( x, y, w, h ) {
+            addVoidAgents(
+                v.heroForcesDeMonPut.c0(
+                    jk( [ "solid", x, y, w, h ] ) ),
+                v.showShape.c0( jk( [ 0,
+                    [ "rect", "#0000FF",
+                        [ "canvas", 100 + x, 100 + y ], w, h ]
+                ] ) )
+            );
+        }
+        solid( -1 * 50, -3 * 50, 2 * 50, 2 * 50 );
+        solid( -3 * 50, -1 * 50, 2 * 50, 2 * 50 );
+        solid( 1 * 50, -1 * 50, 2 * 50, 2 * 50 );
+        solid( -1 * 50, 1 * 50, 2 * 50, 2 * 50 );
         addVoidAgents(
             $.letPlus(
                 $.useBeh( behSplit(), usef( function ( keys ) {
@@ -869,9 +883,6 @@ _.appendDom( window, { load: function () {
                     d.e02( jk( [ "accel", 0, 0.0002 ] ) ) )
             ),
             
-            v.heroForcesDeMonPut.c0(
-                jk( [ "solid", 0, 100, 200, 200 ] ) ),
-            
             v.heroVolitionAnimPut.c2( d.e02( usef(
                 function ( keys, env ) {
                     var keysObj = {};
@@ -902,10 +913,46 @@ _.appendDom( window, { load: function () {
                     jk( [ "jump", -0.1, -0.05 ] ) )
             ),
             
+            // TODO: Give the hero horizontal friction.
+            jif(
+                usejf( function ( kinetics, volition ) {
+                    // TODO: Extract the magic number 30 into a more
+                    // global config location.
+                    var fps = 30;
+                    var dtMillis = 1000 / fps;
+                    // TODO: Extract the magic number 0.4 into a more
+                    // global config location.
+                    return volition.goingLeft &&
+                        (-kinetics.vx * dtMillis <
+                            heroNaturalW * 0.4);
+                },
+                    v.heroKineticsAnimGet.c0( a ),
+                    v.heroVolitionAnimGet.c0( a ) ),
+                v.heroForcesDeMonPut.c2(
+                    d.e02( jk( [ "accel", -0.0005, 0 ] ) ) )
+            ),
+            jif(
+                usejf( function ( kinetics, volition ) {
+                    // TODO: Extract the magic number 30 into a more
+                    // global config location.
+                    var fps = 30;
+                    var dtMillis = 1000 / fps;
+                    // TODO: Extract the magic number 0.4 into a more
+                    // global config location.
+                    return volition.goingRight &&
+                        (kinetics.vx * dtMillis <
+                            heroNaturalW * 0.4);
+                },
+                    v.heroKineticsAnimGet.c0( a ),
+                    v.heroVolitionAnimGet.c0( a ) ),
+                v.heroForcesDeMonPut.c2(
+                    d.e02( jk( [ "accel", 0.0005, 0 ] ) ) )
+            ),
+            
             v.showShape.c0( usejf( function ( animState ) {
                 return [ 0,
                     [ "rect", "#FFFF00",
-                        [ "viewport",
+                        [ "canvas",
                             100 + animState.centerX -
                                 (animState.squishW / 2),
                             100 + animState.centerY -
@@ -1031,8 +1078,9 @@ _.appendDom( window, { load: function () {
 <body>
 <h3>Platformer</h3>
 <div id="demo"></div>
-<p>Use the w key to jump. Try holding the key for different periods of
+<p>Use the W key to jump. Try holding the key for different periods of
   time.</p>
+<p>Use the A and D keys to move left and right.</p>
 <p>TODO: Actually make this into a platform game.</p>
 <p>TODO: Put a better description here.</p>
 </body>
