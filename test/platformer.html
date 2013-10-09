@@ -306,7 +306,7 @@ _.appendDom( window, { load: function () {
             jumping: false,
             // TODO: See if this should really be part of the
             // heroVolitionAnim state.
-            recentlyJumped: false
+            ignoringJumps: false
         },
         sortByMap( function ( state ) {
             return state.precedence;
@@ -321,15 +321,15 @@ _.appendDom( window, { load: function () {
                 var envJumpPropelled = rule[ 4 ];
                 return [ function ( oldVal ) {
                     var jumping = controlJump &&
-                        ((envStanding && !oldVal.recentlyJumped) ||
+                        ((envStanding && !oldVal.ignoringJumps) ||
                             (envJumpPropelled && oldVal.jumping));
                     return { cooldownMillis: ~~(1000 / 30), newVal: {
                         precedence: 0,
                         goingLeft: controlLeft && !controlRight,
                         goingRight: controlRight && !controlLeft,
                         jumping: jumping,
-                        recentlyJumped: jumping ||
-                            (controlJump && oldVal.recentlyJumped)
+                        ignoringJumps: !envStanding ||
+                            (controlJump && oldVal.ignoringJumps)
                     } };
                 } ];
             }
