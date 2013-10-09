@@ -344,6 +344,14 @@ _.appendDom( window, { load: function () {
             precedence: 0,
             vx: 0,
             vy: 0,
+            
+            // NOTE: If the hero ever moves faster than one hero
+            // radius per frame, it can move through solid objects.
+            // Because of this, we always adjust after acceleration so
+            // the hero's velocity is slow enough.
+            topSpeedX: heroNaturalW * 0.4,
+            topSpeedY: heroNaturalH * 0.4,
+            
             centerX: 0,
             centerY: 0,
             naturalW: heroNaturalW,
@@ -436,8 +444,14 @@ _.appendDom( window, { load: function () {
                     var jumping = tryingToJump &&
                         0 < ov.jumpPropelRemainingMillis;
                     
-                    var desiredfvx = ov.vx + ax * dtMillis;
-                    var desiredfvy = ov.vy + ay * dtMillis;
+                    function clamp( min, val, max ) {
+                        return Math.max( min, Math.min( val, max ) );
+                    }
+                    
+                    var desiredfvx = clamp( -ov.topSpeedX,
+                        ov.vx + ax * dtMillis, ov.topSpeedX );
+                    var desiredfvy = clamp( -ov.topSpeedY,
+                        ov.vy + ay * dtMillis, ov.topSpeedY );
                     var desiredmidvx = (ov.vx + desiredfvx) / 2;
                     var desiredmidvy = (ov.vy + desiredfvy) / 2;
                     var velocityIsBasedOnJump =
@@ -562,6 +576,8 @@ _.appendDom( window, { load: function () {
                         precedence: 0,
                         vx: actualfvx,
                         vy: actualfvy,
+                        topSpeedX: ov.topSpeedX,
+                        topSpeedY: ov.topSpeedY,
                         centerX: actualcx,
                         centerY: actualcy,
                         naturalW: ov.naturalW,
@@ -849,41 +865,13 @@ _.appendDom( window, { load: function () {
                     } ) ) ];
             }, v.heroForcesDeMonGet.c0( a ) ) ),
             
-            // NOTE: If the hero ever moves faster than one hero
-            // radius per frame, it can move through solid objects.
-            // Hence, we only apply this acceleration if the hero is
-            // slow enough.
-            //
-            // TODO: Right now we have to delay the gravity force
-            // since we want it to depend on heroKineticsAnimGet,
-            // which in turn depends on the forces being applied,
-            // which depends on whether we apply the gravity force,
-            // and so on. See if we can break this cycle another way.
-            // Perhaps we should handle a max speed inside the stepper
-            // itself, so that it automatically ignores excess
-            // acceleration.
-            //
-            jif(
-                usejf( function ( kinetics ) {
-                    // TODO: Extract the magic number 30 into a more
-                    // global config location.
-                    var fps = 30;
-                    var dtMillis = 1000 / fps;
-                    // TODO: Extract the magic number 0.4 into a more
-                    // global config location.
-                    return kinetics.vy * dtMillis <
-                        heroNaturalH * 0.4;
-                }, v.heroKineticsAnimGet.c0( a ) ),
-                // TODO: See if we really want to use floating-point
-                // accelerations like this. This is a speed of 0.0002
-                // distance units per millisecond per millisecond,
-                // i.e. a speed of 200 distance units per second per
-                // second.
-                v.heroForcesDeMonPut.c2(
-                    d.e02( jk( [ "accel", 0, 0.0002 ] ) ) )
-            ),
+            // TODO: See if we really want to use floating-point
+            // accelerations like this. This is a speed of 0.0002
+            // distance units per millisecond per millisecond, i.e. a
+            // speed of 200 distance units per second per second.
+            v.heroForcesDeMonPut.c0( jk( [ "accel", 0, 0.0002 ] ) ),
             
-            v.heroVolitionAnimPut.c2( d.e02( usef(
+            v.heroVolitionAnimPut.c2( usef(
                 function ( keys, env ) {
                     var keysObj = {};
                     _.arrEach( JSON.parse( keys ), function ( key ) {
@@ -901,9 +889,22 @@ _.appendDom( window, { load: function () {
                         controlLeft, controlRight, controlJump,
                         envStanding, envJumpPropelled ] ) ];
                 },
-                v.stableKeyboard.c0( a ),
-                v.heroKineticsAnimGet.c0( a )
-            ) ) ),
+                v.stableKeyboard.c2( d.e02( a ) ),
+                
+                // NOTE: The hero's volition is partly dependent on
+                // its kinetics (and, of course, vice versa). To
+                // control this feedback loop, we explicitly make the
+                // volition depend on a somewhat out-of-date kinetics
+                // value. This means the hero might try to jump even
+                // in cases where it makes no difference, and (much
+                // worse) the hero might not try to jump because it
+                // doesn't know it's standing yet. (We don't want to
+                // let the player hold the jump button to bounce.)
+                //
+                // TODO: Figure out if we can improve this.
+                //
+                d.e02( v.heroKineticsAnimGet.c0( a ) )
+            ) ),
             
             jif(
                 usejf( function ( volition ) {
@@ -915,38 +916,18 @@ _.appendDom( window, { load: function () {
             
             // TODO: Give the hero horizontal friction.
             jif(
-                usejf( function ( kinetics, volition ) {
-                    // TODO: Extract the magic number 30 into a more
-                    // global config location.
-                    var fps = 30;
-                    var dtMillis = 1000 / fps;
-                    // TODO: Extract the magic number 0.4 into a more
-                    // global config location.
-                    return volition.goingLeft &&
-                        (-kinetics.vx * dtMillis <
-                            heroNaturalW * 0.4);
-                },
-                    v.heroKineticsAnimGet.c0( a ),
-                    v.heroVolitionAnimGet.c0( a ) ),
-                v.heroForcesDeMonPut.c2(
-                    d.e02( jk( [ "accel", -0.0005, 0 ] ) ) )
+                usejf( function ( volition ) {
+                    return volition.goingLeft;
+                }, v.heroVolitionAnimGet.c0( a ) ),
+                v.heroForcesDeMonPut.c0(
+                    jk( [ "accel", -0.0005, 0 ] ) )
             ),
             jif(
-                usejf( function ( kinetics, volition ) {
-                    // TODO: Extract the magic number 30 into a more
-                    // global config location.
-                    var fps = 30;
-                    var dtMillis = 1000 / fps;
-                    // TODO: Extract the magic number 0.4 into a more
-                    // global config location.
-                    return volition.goingRight &&
-                        (kinetics.vx * dtMillis <
-                            heroNaturalW * 0.4);
-                },
-                    v.heroKineticsAnimGet.c0( a ),
-                    v.heroVolitionAnimGet.c0( a ) ),
-                v.heroForcesDeMonPut.c2(
-                    d.e02( jk( [ "accel", 0.0005, 0 ] ) ) )
+                usejf( function ( volition ) {
+                    return volition.goingRight;
+                }, v.heroVolitionAnimGet.c0( a ) ),
+                v.heroForcesDeMonPut.c0(
+                    jk( [ "accel", 0.0005, 0 ] ) )
             ),
             
             v.showShape.c0( usejf( function ( animState ) {
