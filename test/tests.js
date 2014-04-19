@@ -40,7 +40,7 @@
 // TODO: Implement persistence for resources, and perhaps implement a
 // localStorage resource to demonstrate it with.
 //
-// TODO: Reimplement resources in terms of makeLinkedSigPair objects
+// TODO: Reimplement resources in terms of makeLinkedWirePair objects
 // instead of membranes.
 
 
@@ -235,21 +235,19 @@ function makeConvenientHarness() {
     membranePair.b.syncOnInDemandAvailable( function () {
         explicitlyIgnoreMembraneDemand( membranePair.b.membrane );
     } );
-    var onBeginObj = makeOnBegin();
-    var inPair = makeLinkedSigPair( nowMillis );
-    var outPair = makeLinkedSigPair( nowMillis );
+    var context = makeContext( nowMillis, membranePair.b.membrane );
+    var inPair = makeLinkedWirePair( context.context, nowMillis );
+    var outPair = makeLinkedWirePair( context.context, nowMillis );
     
     var result = {};
-    result.context = {
-        startMillis: nowMillis,
-        membrane: membranePair.b.membrane,
-        onBegin: onBeginObj.onBegin
-    };
-    result.appActivityInSig = inPair.readable;
-    result.appActivityOutSig = outPair.writable;
+    result.context = context.context;
+    result.appActivityInWire = inPair.readable;
+    result.appActivityOutWire = outPair.writable;
     result.begin = function () {
-        onBeginObj.begin();
-        outPair.readable.readEachEntry( function ( entry ) {
+        context.begin();
+        context.timeToMakeSigs();
+        context.sigsReady();
+        outPair.readable.sig.readEachEntry( function ( entry ) {
             // Do nothing.
         } );
         
@@ -261,7 +259,7 @@ function makeConvenientHarness() {
         var otherOutStabilityMillis = 1000000;
         setInterval( function () {
             var nowMillis = new Date().getTime();
-            inPair.writable.history.setData(
+            inPair.writable.sig.history.setData(
                 [], nowMillis, nowMillis + stabilityMillis );
             membranePair.a.membrane.raiseOtherOutPermanentUntilMillis(
                 nowMillis + otherOutStabilityMillis );
@@ -286,9 +284,9 @@ function convenientlyInstallBehaviorWithCaps( caps, var_args ) {
         harness.context,
         typeTimes( caps,
             typeAtom( beh.inType.second.offsetMillis,
-                harness.appActivityInSig ) ),
+                harness.appActivityInWire ) ),
         typeAtom( beh.outType.offsetMillis,
-            harness.appActivityOutSig )
+            harness.appActivityOutWire )
     );
     harness.begin();
 }
@@ -332,9 +330,9 @@ function behToCap( beh ) {
             return true;
         },
         doStaticInvoke: function (
-            context, delayMillis, inSigs, outSigs ) {
+            context, delayMillis, inWires, outWires ) {
             
-            beh.install( context, inSigs, outSigs );
+            beh.install( context, inWires, outWires );
         }
     } );
 }
@@ -440,7 +438,7 @@ function makeTestForLambdaLang() {
     
     var envImpl = makeLambdaLangNameMap();
     envImpl.set( "appActivity",
-        typeAtom( 0, harness.appActivityInSig ) );
+        typeAtom( 0, harness.appActivityInWire ) );
     envImpl.set( "mouse", behToCap( behMouseQuery() ) );
     envImpl.set( "dom", behToCap( behDomDiagnostic(
         function ( linkMetadata ) {
@@ -452,7 +450,7 @@ function makeTestForLambdaLang() {
     } ) ) );
     
     runLambdaLang( harness.context, envImpl,
-        td02( typeAtom( 0, harness.appActivityOutSig ) ),
+        td02( typeAtom( 0, harness.appActivityOutWire ) ),
         $.call( ld02( $.va( "dom" ) ), td02( atom ),
             ld12(
                 $.call( ld01( $.va( "mouse" ) ), td01( atom ),
@@ -517,16 +515,16 @@ function runLambdaLangConvenient( timeOffsetsMillis, env, body ) {
         v[ varName ] = varInfo;
     } );
     envImpl.set( "appActivity",
-        typeAtom( 0, harness.appActivityInSig ) );
+        typeAtom( 0, harness.appActivityInWire ) );
     v[ "appActivity" ] = { v: $.va( "appActivity" ) };
     
     var endMillis = timeOffsetsMillis[ timeOffsetsMillis.length - 1 ];
-    var endType = typeAtom( endMillis, harness.appActivityOutSig );
+    var endType = typeAtom( endMillis, harness.appActivityOutWire );
     
     runLambdaLang(
         harness.context,
         envImpl,
-        typeAtom( endMillis, harness.appActivityOutSig ),
+        typeAtom( endMillis, harness.appActivityOutWire ),
         _.arrFoldr(
             _.acc( function ( y ) {
                 body( $, d, v, function ( var_args ) {

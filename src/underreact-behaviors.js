@@ -383,10 +383,10 @@ function makeAnytimeFnInstallationPair( startMillis, type ) {
         
         writable.addConnectionDependency( readable );
         writable.onStaticInvoke(
-            function ( context, delayMillis, inSigs, outSigs ) {
+            function ( context, delayMillis, inWires, outWires ) {
             
             readable.doStaticInvoke(
-                context, delayMillis, inSigs, outSigs );
+                context, delayMillis, inWires, outWires );
         } );
     };
     
@@ -398,22 +398,23 @@ function makeAnytimeFnInstallationPair( startMillis, type ) {
             } );
     };
     readable.doStaticInvoke = function (
-        context, delayMillis, inSigs, outSigs ) {
+        context, delayMillis, inWires, outWires ) {
         
         if ( doStaticInvoke === null )
             throw new Error();
-        doStaticInvoke( context, delayMillis, inSigs, outSigs );
+        doStaticInvoke( context, delayMillis, inWires, outWires );
     };
     
     return { writable: writable, readable: readable };
 }
 
-function makePairsForType( startMillis, type ) {
+function makePairsForType( context, type ) {
     var pairs = mapTypeLeafInfo( type, function ( type ) {
         if ( type.op === "atom" ) {
-            return makeLinkedSigPair( startMillis );
+            return makeLinkedWirePair( context, context.startMillis );
         } else if ( type.op === "anytimeFn" ) {
-            return makeAnytimeFnInstallationPair( startMillis, type );
+            return makeAnytimeFnInstallationPair(
+                context.startMillis, type );
         } else {
             throw new Error();
         }
@@ -428,34 +429,86 @@ function makePairsForType( startMillis, type ) {
     return result;
 }
 
-function makeOnBegin() {
-    var begun = false;
-    var funcs = [];
+function makeContext( startMillis, membrane ) {
+    var onBeginListeners = [];
+    var onTimeToMakeSigsListeners = [];
+    var onSigsReadyListeners = [];
     
     var result = {};
-    result.onBegin = function ( func ) {
+    result.context = {};
+    result.context.startMillis = startMillis;
+    result.context.membrane = membrane;
+    result.context.onBegin = function ( func ) {
         
         // If someone's accidentally using the same behavior
         // installation context to call onBegin even after the begin()
         // phase is underway, catch that mistake and throw an error.
-        if ( begun )
+        if ( onBeginListeners === null )
             throw new Error();
         
-        funcs.push( func );
+        onBeginListeners.push( func );
+    };
+    result.context.onTimeToMakeSigs = function ( func ) {
+        if ( onBeginListeners === null )
+            throw new Error();
+        onTimeToMakeSigsListeners.push( func );
+    };
+    result.context.onSigsReady = function ( func ) {
+        if ( onBeginListeners === null )
+            throw new Error();
+        onSigsReadyListeners.push( func );
     };
     result.begin = function () {
-        var begun = true;
-        for ( var n = funcs.length; n !== 0; n = funcs.length ) {
-            funcs = _.arrRem( funcs, function ( func ) {
+        if ( onBeginListeners === null )
+            throw new Error();
+        for ( var n = onBeginListeners.length;
+            n !== 0;
+            n = onBeginListeners.length ) {
+            
+            onBeginListeners = _.arrRem( onBeginListeners,
+                function ( func ) {
+                
                 return func();
             } );
             
             // If we're probably in an infinite loop, throw an error.
-            if ( funcs.length === n )
+            if ( onBeginListeners.length === n )
                 throw new Error();
         }
+        onBeginListeners = null;
+    };
+    result.timeToMakeSigs = function () {
+        if ( onTimeToMakeSigsListeners === null )
+            throw new Error();  // too late
+        if ( onBeginListeners !== null )
+            throw new Error();  // too early
+        _.arrEach( onTimeToMakeSigsListeners, function ( func ) {
+            func();
+        } );
+        onTimeToMakeSigsListeners = null;
+    };
+    result.sigsReady = function () {
+        if ( onSigsReadyListeners === null )
+            throw new Error();  // too late
+        if ( onTimeToMakeSigsListeners !== null )
+            throw new Error();  // too early
+        _.arrEach( onSigsReadyListeners, function ( func ) {
+            func();
+        } );
+        onSigsReadyListeners = null;
     };
     return result;
+}
+
+function makeSubcontext( parentContext, startMillis ) {
+    var result = makeContext( startMillis, parentContext.membrane );
+    parentContext.onTimeToMakeSigs( function () {
+        result.timeToMakeSigs();
+    } );
+    parentContext.onSigsReady( function () {
+        result.sigsReady();
+    } );
+    return { context: result.context, begin: result.begin };
 }
 
 // ===== Behavior category ===========================================
@@ -465,16 +518,14 @@ function behId( type ) {
     var result = {};
     result.inType = type;
     result.outType = type;
-    result.install = function ( context, inSigs, outSigs ) {
-        eachTypeLeafNodeOver( inSigs, outSigs,
-            function ( type, inSig, outSig ) {
+    result.install = function ( context, inWires, outWires ) {
+        eachTypeLeafNodeOver( inWires, outWires,
+            function ( type, inWire, outWire ) {
             
             if ( type.op === "atom" ) {
-                inSig.readEachEntry( function ( entry ) {
-                    outSig.history.addEntry( entry );
-                } );
+                outWire.readSigFrom( inWire );
             } else if ( type.op === "anytimeFn" ) {
-                outSig.readFrom( inSig );
+                outWire.readFrom( inWire );
             } else {
                 throw new Error();
             }
@@ -494,11 +545,10 @@ function behSeq( behOne, behTwo ) {
     result.inType = behOne.inType;
     result.outType = diff.offsetMillis === null ? behTwo.outType :
         typePlusOffsetMillis( diff.offsetMillis, behTwo.outType );
-    result.install = function ( context, inSigs, outSigs ) {
-        var pairs =
-            makePairsForType( context.startMillis, behOne.outType );
-        behOne.install( context, inSigs, pairs.writables );
-        behTwo.install( context, pairs.readables, outSigs );
+    result.install = function ( context, inWires, outWires ) {
+        var pairs = makePairsForType( context, behOne.outType );
+        behOne.install( context, inWires, pairs.writables );
+        behTwo.install( context, pairs.readables, outWires );
     };
     return result;
 }
@@ -522,8 +572,8 @@ function behFstElim( type ) {
     var result = {};
     result.inType = typeTimes( type, typeOne() );
     result.outType = type;
-    result.install = function ( context, inSigs, outSigs ) {
-        behId( type ).install( context, inSigs.first, outSigs );
+    result.install = function ( context, inWires, outWires ) {
+        behId( type ).install( context, inWires.first, outWires );
     };
     return result;
 }
@@ -532,8 +582,8 @@ function behFstIntro( type ) {
     var result = {};
     result.inType = type;
     result.outType = typeTimes( type, typeOne() );
-    result.install = function ( context, inSigs, outSigs ) {
-        behId( type ).install( context, inSigs, outSigs.first );
+    result.install = function ( context, inWires, outWires ) {
+        behId( type ).install( context, inWires, outWires.first );
     };
     return result;
 }
@@ -541,10 +591,10 @@ function behFirst( beh, otherType ) {
     var result = {};
     result.inType = typeTimes( beh.inType, otherType );
     result.outType = typeTimes( beh.outType, otherType );
-    result.install = function ( context, inSigs, outSigs ) {
-        beh.install( context, inSigs.first, outSigs.first );
+    result.install = function ( context, inWires, outWires ) {
+        beh.install( context, inWires.first, outWires.first );
         behId( otherType ).install( context,
-            inSigs.second, outSigs.second );
+            inWires.second, outWires.second );
     };
     return result;
 }
@@ -552,11 +602,11 @@ function behSwap( origFirstType, origSecondType ) {
     var result = {};
     result.inType = typeTimes( origFirstType, origSecondType );
     result.outType = typeTimes( origSecondType, origFirstType );
-    result.install = function ( context, inSigs, outSigs ) {
+    result.install = function ( context, inWires, outWires ) {
         behId( origFirstType ).install( context,
-            inSigs.first, outSigs.second );
+            inWires.first, outWires.second );
         behId( origSecondType ).install( context,
-            inSigs.second, outSigs.first );
+            inWires.second, outWires.first );
     };
     return result;
 }
@@ -566,13 +616,13 @@ function behAssoclp( catcherType, ballType, pitcherType ) {
         typeTimes( catcherType, typeTimes( ballType, pitcherType ) );
     result.outType =
         typeTimes( typeTimes( catcherType, ballType ), pitcherType );
-    result.install = function ( context, inSigs, outSigs ) {
+    result.install = function ( context, inWires, outWires ) {
         behId( catcherType ).install( context,
-            inSigs.first, outSigs.first.first );
+            inWires.first, outWires.first.first );
         behId( ballType ).install( context,
-            inSigs.second.first, outSigs.first.second );
+            inWires.second.first, outWires.first.second );
         behId( pitcherType ).install( context,
-            inSigs.second.second, outSigs.second );
+            inWires.second.second, outWires.second );
     };
     return result;
 }
@@ -580,18 +630,21 @@ function behDup( type ) {
     var result = {};
     result.inType = type;
     result.outType = typeTimes( type, type );
-    result.install = function ( context, inSigs, outSigs ) {
-        eachTypeLeafNodeOver( inSigs, outSigs.first, outSigs.second,
-            function ( type, inSig, outSigFirst, outSigSecond ) {
+    result.install = function ( context, inWires, outWires ) {
+        eachTypeLeafNodeOver(
+            inWires, outWires.first, outWires.second,
+            function ( type, inWire, outWireFirst, outWireSecond ) {
             
             if ( type.op === "atom" ) {
-                inSig.readEachEntry( function ( entry ) {
-                    outSigFirst.history.addEntry( entry );
-                    outSigSecond.history.addEntry( entry );
+                context.onSigsReady( function () {
+                    inWire.sig.readEachEntry( function ( entry ) {
+                        outWireFirst.sig.history.addEntry( entry );
+                        outWireSecond.sig.history.addEntry( entry );
+                    } );
                 } );
             } else if ( type.op === "anytimeFn" ) {
-                outSigFirst.readFrom( inSig );
-                outSigSecond.readFrom( inSig );
+                outWireFirst.readFrom( inWire );
+                outWireSecond.readFrom( inWire );
             } else {
                 throw new Error();
             }
@@ -603,11 +656,13 @@ function behDrop( type ) {
     var result = {};
     result.inType = type;
     result.outType = typeOne();
-    result.install = function ( context, inSigs, outSigs ) {
-        eachTypeLeafNodeOver( inSigs, function ( type, inSig ) {
+    result.install = function ( context, inWires, outWires ) {
+        eachTypeLeafNodeOver( inWires, function ( type, inWire ) {
             if ( type.op === "atom" ) {
-                inSig.readEachEntry( function ( entry ) {
-                    // Do nothing.
+                context.onSigsReady( function () {
+                    inWire.sig.readEachEntry( function ( entry ) {
+                        // Do nothing.
+                    } );
                 } );
             } else if ( type.op === "anytimeFn" ) {
                 // Do nothing.
@@ -746,8 +801,8 @@ function behLeftIntro( type ) {
     var result = {};
     result.inType = type;
     result.outType = typePlus( type, typeZero() );
-    result.install = function ( context, inSigs, outSigs ) {
-        behId( type ).install( context, inSigs, outSigs.left );
+    result.install = function ( context, inWires, outWires ) {
+        behId( type ).install( context, inWires, outWires.left );
     };
     return result;
 }
@@ -756,8 +811,8 @@ function behLeftElim( type ) {
     var result = {};
     result.inType = typePlus( type, typeZero() );
     result.outType = type;
-    result.install = function ( context, inSigs, outSigs ) {
-        behId( type ).install( context, inSigs.left, outSigs );
+    result.install = function ( context, inWires, outWires ) {
+        behId( type ).install( context, inWires.left, outWires );
     };
     return result;
 }
@@ -765,10 +820,10 @@ function behLeft( beh, otherType ) {
     var result = {};
     result.inType = typePlus( beh.inType, otherType );
     result.outType = typePlus( beh.outType, otherType );
-    result.install = function ( context, inSigs, outSigs ) {
-        beh.install( context, inSigs.left, outSigs.left );
+    result.install = function ( context, inWires, outWires ) {
+        beh.install( context, inWires.left, outWires.left );
         behId( otherType ).install( context,
-            inSigs.right, outSigs.right );
+            inWires.right, outWires.right );
     };
     return result;
 }
@@ -776,11 +831,11 @@ function behMirror( origLeftType, origRightType ) {
     var result = {};
     result.inType = typePlus( origLeftType, origRightType );
     result.outType = typePlus( origRightType, origLeftType );
-    result.install = function ( context, inSigs, outSigs ) {
+    result.install = function ( context, inWires, outWires ) {
         behId( origLeftType ).install( context,
-            inSigs.left, outSigs.right );
+            inWires.left, outWires.right );
         behId( origRightType ).install( context,
-            inSigs.right, outSigs.left );
+            inWires.right, outWires.left );
     };
     return result;
 }
@@ -790,13 +845,13 @@ function behAssocrs( pitcherType, ballType, catcherType ) {
         typePlus( typePlus( pitcherType, ballType ), catcherType );
     result.outType =
         typePlus( pitcherType, typePlus( ballType, catcherType ) );
-    result.install = function ( context, inSigs, outSigs ) {
+    result.install = function ( context, inWires, outWires ) {
         behId( pitcherType ).install( context,
-            inSigs.left.left, outSigs.left );
+            inWires.left.left, outWires.left );
         behId( ballType ).install( context,
-            inSigs.left.right, outSigs.right.left );
+            inWires.left.right, outWires.right.left );
         behId( catcherType ).install( context,
-            inSigs.right, outSigs.right.right );
+            inWires.right, outWires.right.right );
     };
     return result;
 }
@@ -866,23 +921,27 @@ function behMerge( type ) {
     var result = {};
     result.inType = typePlus( type, type );
     result.outType = type;
-    result.install = function ( context, inSigs, outSigs ) {
-        var activitySigsType = typeOne();
-        var leftActivitySigs = typeOne();
-        var rightActivitySigs = typeOne();
+    result.install = function ( context, inWires, outWires ) {
+        var activityWiresType = typeOne();
+        var leftActivityWires = typeOne();
+        var rightActivityWires = typeOne();
         var informantGroups = informantsNeeded.map(
             function ( unused, offsetMillis ) {
             
-            activitySigsType = typeTimes(
-                typeAtom( offsetMillis, null ), activitySigsType );
-            var leftPair = makeLinkedSigPair();
-            leftActivitySigs = typeTimes(
+            activityWiresType = typeTimes(
+                typeAtom( offsetMillis, null ), activityWiresType );
+            // TODO: See if this is the right startMillis to use.
+            var leftPair =
+                makeLinkedWirePair( context, context.startMillis );
+            leftActivityWires = typeTimes(
                 typeAtom( offsetMillis, leftPair.readable ),
-                leftActivitySigs );
-            var rightPair = makeLinkedSigPair();
-            rightActivitySigs = typeTimes(
+                leftActivityWires );
+            // TODO: See if this is the right startMillis to use.
+            var rightPair =
+                makeLinkedWirePair( context, context.startMillis );
+            rightActivityWires = typeTimes(
                 typeAtom( offsetMillis, rightPair.readable ),
-                rightActivitySigs );
+                rightActivityWires );
             var activityWritables = {};
             activityWritable[ "left" ] = leftPair.writable;
             activityWritable[ "right" ] = rightPair.writable;
@@ -906,24 +965,23 @@ function behMerge( type ) {
             } );
             return result;
         }
-        function dupActivitySigs() {
-            function dup( activitySigs ) {
-                var dupFirst = makePairsForType(
-                    context.startMillis, activitySigs );
-                var dupSecond = makePairsForType(
-                    context.startMillis, activitySigs );
-                behDup( activitySigsType ).install(
-                    context, activitySigs,
+        function dupActivityWires() {
+            function dup( activityWires ) {
+                var dupFirst =
+                    makePairsForType( context, activityWires );
+                var dupSecond =
+                    makePairsForType( context, activityWires );
+                behDup( activityWiresType ).install(
+                    context, activityWires,
                     typeTimes(
                         dupFirst.writables, dupSecond.writables ) );
                 return { first: dupFirst.readables,
                     second: dupSecond.readables };
             }
-            splittingActivitySigs = true;
-            var leftDup = dup( leftActivitySigs );
-            var rightDup = dup( rightActivitySigs );
-            leftActivitySigs = leftDup.second;
-            rightActivitySigs = rightDup.second;
+            var leftDup = dup( leftActivityWires );
+            var rightDup = dup( rightActivityWires );
+            leftActivityWires = leftDup.second;
+            rightActivityWires = rightDup.second;
             return typePlus( leftDup.first, rightDup.first );
         }
         
@@ -1029,8 +1087,9 @@ function behMerge( type ) {
         }
         
         eachTypeLeafNodeOver(
-            type, inSigs.left, inSigs.right, outSigs,
-            function ( type, unused, inSigLeft, inSigRight, outSig ) {
+            type, inWires.left, inWires.right, outWires,
+            function (
+                type, unused, inWireLeft, inWireRight, outWire ) {
             
             if ( type.op === "atom" ) {
                 var informantPair =
@@ -1064,7 +1123,7 @@ function behMerge( type ) {
                             };
                         }
                         
-                        outSig.history.addEntry( makeEntry(
+                        outWire.sig.history.addEntry( makeEntry(
                             leftEntry.maybeData !== null ?
                                 leftEntry.maybeData :
                                 rightEntry.maybeData
@@ -1082,58 +1141,65 @@ function behMerge( type ) {
                     if ( !!informantPair )
                         processInformantsPending( type.offsetMillis );
                 };
-                // TODO: See if this code is prepared for the fact
-                // that readEachEntry may yield entries that overlap
-                // with each other.
-                inSigLeft.readEachEntry( function ( entry ) {
-                    leftPending.push( entry );
-                    processMergePending();
-                } );
-                inSigRight.readEachEntry( function ( entry ) {
-                    rightPending.push( entry );
-                    processMergePending();
+                inWireLeft.stub();
+                inWireRight.stub();
+                outWire.stub();
+                context.onSigsReady( function () {
+                    // TODO: See if this code is prepared for the fact
+                    // that readEachEntry may yield entries that
+                    // overlap with each other.
+                    inWireLeft.sig.readEachEntry( function ( entry ) {
+                        leftPending.push( entry );
+                        processMergePending();
+                    } );
+                    inWireRight.sig.readEachEntry(
+                        function ( entry ) {
+                        
+                        rightPending.push( entry );
+                        processMergePending();
+                    } );
                 } );
             } else if ( type.op === "anytimeFn" ) {
-                outSig.addConnectionDependency( inSigLeft );
-                outSig.addConnectionDependency( inSigRight );
-                outSig.onStaticInvoke( function (
-                    context, delayMillis, inSigs, outSigs ) {
+                outWire.addConnectionDependency( inWireLeft );
+                outWire.addConnectionDependency( inWireRight );
+                outWire.onStaticInvoke( function (
+                    context, delayMillis, inWires, outWires ) {
                     
-                    var inSigLeftPairs = makePairsForType(
-                        context.startMillis, type.demand );
-                    var inSigRightPairs = makePairsForType(
-                        context.startMillis, type.demand );
-                    var outSigLeftPairs = makePairsForType(
-                        context.startMillis, type.response );
-                    var outSigRightPairs = makePairsForType(
-                        context.startMillis, type.response );
+                    var inWireLeftPairs =
+                        makePairsForType( context, type.demand );
+                    var inWireRightPairs =
+                        makePairsForType( context, type.demand );
+                    var outWireLeftPairs =
+                        makePairsForType( context, type.response );
+                    var outWireRightPairs =
+                        makePairsForType( context, type.response );
                     
                     // Split the inputs.
-                    var aSigs = activitySigsType;
+                    var aWires = activityWiresType;
                     behSeqs(
-                        behDisjoin( type.demand, aSigs, aSigs ),
-                        behEither( behFst( type.demand, aSigs ),
-                            behFst( type.demand, aSigs ) )
+                        behDisjoin( type.demand, aWires, aWires ),
+                        behEither( behFst( type.demand, aWires ),
+                            behFst( type.demand, aWires ) )
                     ).install( context,
-                        typeTimes( inSigs, dupActivitySigs() ),
+                        typeTimes( inWires, dupActivityWires() ),
                         typePlus(
-                            inSigLeftPairs.writable,
-                            inSigRightPairs.writable )
+                            inWireLeftPairs.writable,
+                            inWireRightPairs.writable )
                     );
                     
-                    inSigLeft.doStaticInvoke( context, delayMillis,
-                        inSigLeftPairs.readable,
-                        outSigLeftPairs.writable );
-                    inSigRight.doStaticInvoke( context, delayMillis,
-                        inSigRightPairs.readable,
-                        outSigRightPairs.writable );
+                    inWireLeft.doStaticInvoke( context, delayMillis,
+                        inWireLeftPairs.readable,
+                        outWireLeftPairs.writable );
+                    inWireRight.doStaticInvoke( context, delayMillis,
+                        inWireRightPairs.readable,
+                        outWireRightPairs.writable );
                     
                     // Merge the outputs.
                     behMerge( type.response ).install( context,
                         typePlus(
-                            outSigLeftPairs.readable,
-                            outSigRightPairs.readable ),
-                        outSigs );
+                            outWireLeftPairs.readable,
+                            outWireRightPairs.readable ),
+                        outWires );
                 } );
             } else {
                 throw new Error();
@@ -1148,27 +1214,28 @@ function behVacuous( type ) {
     var result = {};
     result.inType = typeZero();
     result.outType = type;
-    result.install = function ( context, inSigs, outSigs ) {
+    result.install = function ( context, inWires, outWires ) {
         
-        ignoreOutSigs( outSigs );
-        function ignoreOutSigs( outSigs ) {
-            eachTypeLeafNodeOver( outSigs, function ( type, outSig ) {
+        ignoreOutWires( outWires );
+        function ignoreOutWires( outWires ) {
+            eachTypeLeafNodeOver( outWires,
+                function ( type, outWire ) {
+                
                 if ( type.op === "atom" ) {
-                    context.onBegin( function () {
-                        outSig.history.finishData(
+                    context.onSigsReady( function () {
+                        outWire.sig.history.finishData(
                             context.startMillis );
-                        return !!"wasAbleToFinish";
                     } );
                 } else if ( type.op === "anytimeFn" ) {
-                    outSig.onStaticInvoke( function (
-                        context, delayMillis, inSigs, outSigs ) {
+                    outWire.onStaticInvoke( function (
+                        context, delayMillis, inWires, outWires ) {
                         
-                        ignoreOutSigs( outSigs );
-                        eachTypeLeafNodeOver( inSigs,
-                            function ( type, inSig ) {
+                        ignoreOutWires( outWires );
+                        eachTypeLeafNodeOver( inWires,
+                            function ( type, inWire ) {
                             
                             if ( type.op === "atom" ) {
-                                inSig.readEachEntry(
+                                inWire.readEachEntry(
                                     function ( entry ) {
                                     
                                     // Do nothing.
@@ -1297,7 +1364,7 @@ function behDisjoin( branchType, leftType, rightType ) {
     result.outType = typePlus(
         typeTimes( branchType, leftType ),
         typeTimes( branchType, rightType ) );
-    result.install = function ( context, inSigs, outSigs ) {
+    result.install = function ( context, inWires, outWires ) {
         var bins = [];
         function getBin( offsetMillis ) {
             return _.arrAny( bins, function ( bin ) {
@@ -1305,8 +1372,8 @@ function behDisjoin( branchType, leftType, rightType ) {
             } );
         }
         eachTypeLeafNodeOver(
-            inSigs.first, outSigs.left.first, outSigs.right.first,
-            function ( type, inSig, outSigLeft, outSigRight ) {
+            inWires.first, outWires.left.first, outWires.right.first,
+            function ( type, inWire, outWireLeft, outWireRight ) {
             
             if ( type.op === "atom" ) {
                 var bin = getBin( type.offsetMillis );
@@ -1318,36 +1385,39 @@ function behDisjoin( branchType, leftType, rightType ) {
                     };
                     bins.push( bin );
                 }
-                var pending = [];
-                bin.branchesPending.push( {
-                    outSigLeft: outSigLeft,
-                    outSigRight: outSigRight,
-                    conditionPending: new ActivityHistory().init( {
-                        startMillis: context.startMillis
-                    } ),
-                    finalCondition: null,
-                    dataPending: pending
-                } );
-                // TODO: See if this code is prepared for the fact
-                // that readEachEntry may yield entries that overlap
-                // with each other.
-                inSig.readEachEntry( function ( entry ) {
-                    pending.push( entry );
-                    processPending();
+                context.onSigsReady( function () {
+                    var pending = [];
+                    bin.branchesPending.push( {
+                        outSigLeft: outWireLeft.sig,
+                        outSigRight: outWireRight.sig,
+                        conditionPending:
+                            new ActivityHistory().init( {
+                                startMillis: context.startMillis
+                            } ),
+                        finalCondition: null,
+                        dataPending: pending
+                    } );
+                    // TODO: See if this code is prepared for the fact
+                    // that readEachEntry may yield entries that
+                    // overlap with each other.
+                    inWire.sig.readEachEntry( function ( entry ) {
+                        pending.push( entry );
+                        processPending();
+                    } );
                 } );
             } else if ( type.op === "anytimeFn" ) {
-                outSigLeft.readFrom( inSig );
-                outSigRight.readFrom( inSig );
+                outWireLeft.readFrom( inWire );
+                outWireRight.readFrom( inWire );
             } else {
                 throw new Error();
             }
         } );
         
         function eachOnOneSide(
-            condition, oppositeCondition, type, inSigs, outSigs ) {
+            condition, oppositeCondition, type, inWires, outWires ) {
             
-            eachTypeLeafNodeOver( inSigs, outSigs,
-                function ( type, inSig, outSig ) {
+            eachTypeLeafNodeOver( inWires, outWires,
+                function ( type, inWire, outWire ) {
                 
                 if ( type.op === "atom" ) {
                     var bin = getBin( type.offsetMillis );
@@ -1360,34 +1430,30 @@ function behDisjoin( branchType, leftType, rightType ) {
                             condition: condition,
                             history: informantHistory
                         } );
-                    // TODO: See if this code is prepared for the fact
-                    // that readEachEntry may yield entries that
-                    // overlap with each other.
-                    inSig.readEachEntry( function ( entry ) {
-                        outSig.history.addEntry( entry );
-                        if ( !!bin ) {
-                            informantHistory.addEntry(
-                                censorEntry( entry ) );
-                            processPending();
-                        }
+                    context.onSigsReady( function () {
+                        // TODO: See if this code is prepared for the
+                        // fact that readEachEntry may yield entries
+                        // that overlap with each other.
+                        inWire.sig.readEachEntry( function ( entry ) {
+                            outWire.sig.history.addEntry( entry );
+                            if ( !!bin ) {
+                                informantHistory.addEntry(
+                                    censorEntry( entry ) );
+                                processPending();
+                            }
+                        } );
                     } );
                 } else if ( type.op === "anytimeFn" ) {
-                    outSig.addConnectionDependency( inSig );
-                    outSig.onStaticInvoke( function (
-                        context, delayMillis, inSigs, outSigs ) {
-                        
-                        inSig.doStaticInvoke(
-                            context, delayMillis, inSigs, outSigs );
-                    } );
+                    outWire.readFrom( inWire );
                 } else {
                     throw new Error();
                 }
             } );
         }
         eachOnOneSide( "left", "notLeft", leftType,
-            inSigs.second.left, outSigs.left.second );
+            inWires.second.left, outWires.left.second );
         eachOnOneSide( "right", "notRight", rightType,
-            inSigs.second.right, outSigs.right.second );
+            inWires.second.right, outWires.right.second );
         
         function processPending() {
             _.arrEach( bins, function ( bin ) {
@@ -1622,25 +1688,29 @@ function behClosure( beh ) {
     result.inType = encapsulatedType;
     result.outType = typeAnytimeFn( paramType, beh.outType, null );
     result.install = function (
-        context, inSigsEncapsulated, outSigsFunc ) {
+        context, inWiresEncapsulated, outWiresFunc ) {
         
-        var outSigFunc = outSigsFunc.leafInfo;
+        var outWireFunc = outWiresFunc.leafInfo;
         
         var invocations = [];
         
-        eachTypeLeafNodeZipper( inSigsEncapsulated, _.idfn,
+        eachTypeLeafNodeZipper( inWiresEncapsulated, _.idfn,
             function ( get ) {
             
-            var type = get( inSigsEncapsulated );
-            var inSig = type.leafInfo;
+            var type = get( inWiresEncapsulated );
+            var inWire = type.leafInfo;
             
             if ( type.op === "atom" ) {
-                inSig.readEachEntry( function ( entry ) {
-                    _.arrEach( invocations, function ( invocation ) {
-                        var responseSig =
-                            get( invocation.writables ).leafInfo;
-                        delayAddEntry( responseSig,
-                            invocation.delayMillis, entry );
+                context.onSigsReady( function () {
+                    inWire.readEachEntry( function ( entry ) {
+                        _.arrEach( invocations,
+                            function ( invocation ) {
+                            
+                            var responseWire =
+                                get( invocation.writables ).leafInfo;
+                            delayAddEntry( responseWire.sig,
+                                invocation.delayMillis, entry );
+                        } );
                     } );
                 } );
             } else if ( type.op === "anytimeFn" ) {
@@ -1654,16 +1724,16 @@ function behClosure( beh ) {
             }
         } );
         
-        outSigFunc.onStaticInvoke( function (
-            context, delayMillis, inSigsParam, outSigsResult ) {
+        outWireFunc.onStaticInvoke( function (
+            context, delayMillis, inWiresParam, outWiresResult ) {
             
-            var delayedEncapsulatedPairs = makePairsForType(
-                context.startMillis, encapsulatedType );
+            var delayedEncapsulatedPairs =
+                makePairsForType( context, encapsulatedType );
             
             eachTypeLeafNodeOver(
-                inSigsEncapsulated,
+                inWiresEncapsulated,
                 delayedEncapsulatedPairs.writables,
-                function ( type, inSig, outSig ) {
+                function ( type, inWire, outWire ) {
                 
                 if ( type.op === "atom" ) {
                     // Do nothing.
@@ -1672,13 +1742,14 @@ function behClosure( beh ) {
                     // delayAddEntry elsewhere.
                     
                 } else if ( type.op === "anytimeFn" ) {
-                    outSig.addConnectionDependency( inSig );
-                    outSig.onStaticInvoke( function (
-                        context, totalDelayMillis, inSigs, outSigs ) {
+                    outWire.addConnectionDependency( inWire );
+                    outWire.onStaticInvoke( function (
+                        context, totalDelayMillis, inWires, outWires
+                        ) {
                         
-                        inSig.doStaticInvoke(
+                        inWire.doStaticInvoke(
                             context, totalDelayMillis + delayMillis,
-                            inSigs, outSigs );
+                            inWires, outWires );
                     } );
                 } else {
                     throw new Error();
@@ -1706,8 +1777,8 @@ function behClosure( beh ) {
                 )
             ).install( context,
                 typeTimes( delayedEncapsulatedPairs.readables,
-                    typePlus( inSigsParam, typeOne() ) ),
-                typePlus( outSigsResult, typeOne() ) );
+                    typePlus( inWiresParam, typeOne() ) ),
+                typePlus( outWiresResult, typeOne() ) );
         } );
     };
     return result;
@@ -1720,23 +1791,21 @@ function behCall( funcType ) {
     var result = {};
     result.inType = typeTimes( funcType, funcType.demand );
     result.outType = funcType.response;
-    result.install = function ( context, inSigs, outSigs ) {
-        var inSigFunc = inSigs.first.leafInfo;
-        var inSigParam = inSigs.second;
+    result.install = function ( context, inWires, outWires ) {
+        var inWireFunc = inWires.first.leafInfo;
+        var inWireParam = inWires.second;
         context.onBegin( function () {
             // TODO: See if we end up entering an infinite loop with
             // this.
-            if ( !inSigFunc.isConnected() )
+            if ( !inWireFunc.isConnected() )
                 return !"wasAbleToFinish";
             
             var delayMillis = 0;
-            var onBeginObj = makeOnBegin();
-            inSigFunc.doStaticInvoke( {
-                startMillis: context.startMillis,
-                membrane: context.membrane,
-                onBegin: onBeginObj.onBegin
-            }, delayMillis, inSigParam, outSigs );
-            onBeginObj.begin();
+            var innerContext =
+                makeSubcontext( context, context.startMillis );
+            inWireFunc.doStaticInvoke( innerContext.context,
+                delayMillis, inWireParam, outWires );
+            innerContext.begin();
             
             return !!"wasAbleToFinish";
         } );
@@ -1750,22 +1819,25 @@ function behDelay( delayMillis, type ) {
     var result = {};
     result.inType = type;
     result.outType = typePlusOffsetMillis( delayMillis, type );
-    result.install = function ( context, inSigs, outSigs ) {
-        eachTypeLeafNodeOver( inSigs, outSigs,
-            function ( type, inSig, outSig ) {
+    result.install = function ( context, inWires, outWires ) {
+        eachTypeLeafNodeOver( inWires, outWires,
+            function ( type, inWire, outWire ) {
             
             if ( type.op === "atom" ) {
-                inSig.readEachEntry( function ( entry ) {
-                    delayAddEntry( outSig, delayMillis, entry );
+                context.onSigsReady( function () {
+                    inWire.sig.readEachEntry( function ( entry ) {
+                        delayAddEntry(
+                            outWire.sig, delayMillis, entry );
+                    } );
                 } );
             } else if ( type.op === "anytimeFn" ) {
-                outSig.addConnectionDependency( inSig );
-                outSig.onStaticInvoke( function (
-                    context, totalDelayMillis, inSigs, outSigs ) {
+                outWire.addConnectionDependency( inWire );
+                outWire.onStaticInvoke( function (
+                    context, totalDelayMillis, inWires, outWires ) {
                     
-                    inSig.doStaticInvoke(
+                    inWire.doStaticInvoke(
                         context, totalDelayMillis + delayMillis,
-                        inSigs, outSigs );
+                        inWires, outWires );
                 } );
             } else {
                 throw new Error();
@@ -1779,15 +1851,17 @@ function behFmap( func ) {
     var result = {};
     result.inType = typeAtom( 0, null );
     result.outType = typeAtom( 0, null );
-    result.install = function ( context, inSigs, outSigs ) {
-        var inSig = inSigs.leafInfo;
-        var outSig = outSigs.leafInfo;
-        inSig.readEachEntry( function ( entry ) {
-            outSig.history.addEntry( {
-                maybeData: entry.maybeData === null ? null :
-                    { val: func( entry.maybeData.val ) },
-                startMillis: entry.startMillis,
-                maybeEndMillis: entry.maybeEndMillis
+    result.install = function ( context, inWires, outWires ) {
+        var inWire = inWires.leafInfo;
+        var outWire = outWires.leafInfo;
+        context.onSigsReady( function () {
+            inWire.sig.readEachEntry( function ( entry ) {
+                outWire.sig.history.addEntry( {
+                    maybeData: entry.maybeData === null ? null :
+                        { val: func( entry.maybeData.val ) },
+                    startMillis: entry.startMillis,
+                    maybeEndMillis: entry.maybeEndMillis
+                } );
             } );
         } );
     };
@@ -1801,31 +1875,33 @@ function behSplit() {
     result.inType = typeAtom( 0, null );
     result.outType =
         typePlus( typeAtom( 0, null ), typeAtom( 0, null ) );
-    result.install = function ( context, inSigs, outSigs ) {
-        var inSig = inSigs.leafInfo;
-        var outSigLeft = outSigs.left.leafInfo;
-        var outSigRight = outSigs.right.leafInfo;
-        inSig.readEachEntry( function ( entry ) {
-            var direction = null;
-            if ( entry.maybeData !== null
-                && _.likeArray( entry.maybeData.val )
-                && entry.maybeData.val.length === 2 )
-                direction = entry.maybeData.val[ 0 ];
-            if ( !(direction === null
-                || direction === "<"
-                || direction === ">") )
-                throw new Error();
-            outSigLeft.history.addEntry( {
-                maybeData: direction === "<" ?
-                    { val: entry.maybeData.val[ 1 ] } : null,
-                startMillis: entry.startMillis,
-                maybeEndMillis: entry.maybeEndMillis
-            } );
-            outSigRight.history.addEntry( {
-                maybeData: direction === ">" ?
-                    { val: entry.maybeData.val[ 1 ] } : null,
-                startMillis: entry.startMillis,
-                maybeEndMillis: entry.maybeEndMillis
+    result.install = function ( context, inWires, outWires ) {
+        var inWire = inWires.leafInfo;
+        var outWireLeft = outWires.left.leafInfo;
+        var outWireRight = outWires.right.leafInfo;
+        context.onSigsReady( function () {
+            inWire.sig.readEachEntry( function ( entry ) {
+                var direction = null;
+                if ( entry.maybeData !== null
+                    && _.likeArray( entry.maybeData.val )
+                    && entry.maybeData.val.length === 2 )
+                    direction = entry.maybeData.val[ 0 ];
+                if ( !(direction === null
+                    || direction === "<"
+                    || direction === ">") )
+                    throw new Error();
+                outWireLeft.sig.history.addEntry( {
+                    maybeData: direction === "<" ?
+                        { val: entry.maybeData.val[ 1 ] } : null,
+                    startMillis: entry.startMillis,
+                    maybeEndMillis: entry.maybeEndMillis
+                } );
+                outWireRight.sig.history.addEntry( {
+                    maybeData: direction === ">" ?
+                        { val: entry.maybeData.val[ 1 ] } : null,
+                    startMillis: entry.startMillis,
+                    maybeEndMillis: entry.maybeEndMillis
+                } );
             } );
         } );
     };
@@ -1837,25 +1913,30 @@ function behZip() {
     result.inType =
         typeTimes( typeAtom( 0, null ), typeAtom( 0, null ) );
     result.outType = typeAtom( 0, null );
-    result.install = function ( context, inSigs, outSigs ) {
-        var inSigFirst = inSigs.first.leafInfo;
-        var inSigSecond = inSigs.second.leafInfo;
-        var outSig = outSigs.leafInfo;
+    result.install = function ( context, inWires, outWires ) {
+        var inWireFirst = inWires.first.leafInfo;
+        var inWireSecond = inWires.second.leafInfo;
+        var outWire = outWires.leafInfo;
         
         var sentMillis = -1 / 0;
         
-        inSigFirst.syncOnAdd( function () {
-            sendOut();
+        context.onSigsReady( function () {
+            inWireFirst.sig.syncOnAdd( function () {
+                sendOut();
+            } );
+            inWireSecond.sig.syncOnAdd( function () {
+                sendOut();
+            } );
         } );
-        inSigSecond.syncOnAdd( function () {
-            sendOut();
-        } );
+        
         function sendOut() {
             // TODO: See if this should use consumeEarliestEntries.
             // For that matter, see if consumeEarliestEntries should
             // use this!
-            var entriesFirst = inSigFirst.history.getAllEntries();
-            var entriesSecond = inSigSecond.history.getAllEntries();
+            var entriesFirst =
+                inWireFirst.sig.history.getAllEntries();
+            var entriesSecond =
+                inWireSecond.sig.history.getAllEntries();
             var endFirstMillis = entsEnd( entriesFirst );
             var endSecondMillis = entsEnd( entriesSecond );
             var endToSendMillis =
@@ -1887,7 +1968,7 @@ function behZip() {
                     (maybeSecondData === null) )
                     throw new Error();
                 
-                outSig.history.addEntry( {
+                outWire.sig.history.addEntry( {
                     maybeData: maybeFirstData === null ? null :
                         { val: [
                             maybeFirstData.val,
@@ -1898,8 +1979,10 @@ function behZip() {
                         null : { val: thisEndToSendMillis }
                 } );
             } );
-            inSigFirst.history.forgetBeforeMillis( endToSendMillis );
-            inSigSecond.history.forgetBeforeMillis( endToSendMillis );
+            inWireFirst.sig.history.forgetBeforeMillis(
+                endToSendMillis );
+            inWireSecond.sig.history.forgetBeforeMillis(
+                endToSendMillis );
             sentMillis = endToSendMillis;
         }
     };
@@ -1920,9 +2003,9 @@ function behYield( delayMillis ) {
     var result = {};
     result.inType = typeAtom( 0, null );
     result.outType = typeAtom( delayMillis, null );
-    result.install = function ( context, inSigs, outSigs ) {
-        var inSig = inSigs.leafInfo;
-        var outSig = outSigs.leafInfo;
+    result.install = function ( context, inWires, outWires ) {
+        var inWire = inWires.leafInfo;
+        var outWire = outWires.leafInfo;
         
         var demander = context.membrane.getNewOutDemander(
             context.startMillis, delayMillis,
@@ -1930,7 +2013,7 @@ function behYield( delayMillis ) {
                 _.arrEach( getAndForgetDemanderResponse( demander ),
                     function ( entry ) {
                     
-                    outSig.history.addEntry( {
+                    outWire.sig.history.addEntry( {
                         maybeData: entry.maybeData === null ? null :
                             { val: entry.maybeData.val.length === 1 ?
                                 [] : entry.maybeData.val[ 1 ] },
@@ -1940,15 +2023,17 @@ function behYield( delayMillis ) {
                 } );
             } );
         
-        inSig.readEachEntry( function ( entry ) {
-            if ( entry.maybeEndMillis === null )
-                demander.finishDemand( entry.startMillis );
-            else if ( entry.maybeData === null )
-                demander.suspendDemand(
-                    entry.startMillis, entry.maybeEndMillis.val );
-            else
-                demander.setDemand( entry.maybeData.val,
-                    entry.startMillis, entry.maybeEndMillis.val );
+        context.onSigsReady( function () {
+            inWire.sig.readEachEntry( function ( entry ) {
+                if ( entry.maybeEndMillis === null )
+                    demander.finishDemand( entry.startMillis );
+                else if ( entry.maybeData === null )
+                    demander.suspendDemand(
+                        entry.startMillis, entry.maybeEndMillis.val );
+                else
+                    demander.setDemand( entry.maybeData.val,
+                        entry.startMillis, entry.maybeEndMillis.val );
+            } );
         } );
     };
     return result;
@@ -1977,21 +2062,33 @@ function connectMembraneToBehaviors( pairHalf, context, delayToBeh ) {
         } );
         if ( poolEntry )
             return poolEntry;
-        var demandPair = makeLinkedSigPair( startMillis );
+        var demandPair = makeLinkedWirePair( context, startMillis );
         var demandAndResponsePair =
-            makeLinkedSigPair( startMillis + delayMillis );
+            makeLinkedWirePair( context, startMillis + delayMillis );
         var beh = delayToBeh( delayMillis );
         if ( !(true
             && !!typesUnify( typeAtom( 0, null ), beh.inType )
             && typesAreEqual( delayMillis, beh.inType, beh.outType )
         ) )
             throw new Error();
+        var innerContext =
+            makeSubcontext( context, startMillis );
+        behSeqs(
+            behDupPar(
+                behDelay( delayMillis, typeAtom( 0, null ) ),
+                beh
+            ),
+            behZip()
+        ).install( innerContext.context,
+            typeAtom( 0, demandPair.readable ),
+            typeAtom( delayMillis, demandAndResponsePair.writable ) );
+        innerContext.begin();
         poolEntry = {
             nextStartMillis: startMillis,
             responseAlreadyGivenMillis: startMillis + delayMillis,
-            demandSig: demandPair.writable
+            demandSig: demandPair.writable.sig
         };
-        demandAndResponsePair.readable.readEachEntry(
+        demandAndResponsePair.readable.sig.readEachEntry(
             function ( entry ) {
             
             if ( entry.maybeData === null )
@@ -2010,22 +2107,6 @@ function connectMembraneToBehaviors( pairHalf, context, delayToBeh ) {
             // loops through the whole pool.
             raiseOtherOutPermanentUntilMillis();
         } );
-        var onBeginObj = makeOnBegin();
-        behSeqs(
-            behDupPar(
-                behDelay( delayMillis, typeAtom( 0, null ) ),
-                beh
-            ),
-            behZip()
-        ).install(
-            {
-                startMillis: startMillis,
-                membrane: context.membrane,
-                onBegin: onBeginObj.onBegin
-            },
-            typeAtom( 0, demandPair.readable ),
-            typeAtom( delayMillis, demandAndResponsePair.writable ) );
-        onBeginObj.begin();
         bin.push( poolEntry );
         return poolEntry;
     }
@@ -2158,19 +2239,21 @@ function behDemandMonitor( defer ) {
     var demander = {};
     demander.inType = typeAtom( 0, null );
     demander.outType = typeOne();
-    demander.install = function ( context, inSigs, outSigs ) {
-        var inSig = inSigs.leafInfo;
+    demander.install = function ( context, inWires, outWires ) {
+        var inWire = inWires.leafInfo;
         
         var i = installedDemanders.length;
         
         installedDemanders.push(
             { startMillis: context.startMillis } );
-        inSig.readEachEntry( function ( entry ) {
-            createDemandersPending();
-            _.arrEach( installedMonitors, function ( monitor ) {
-                monitor.demandersPending[ i ].addEntry( entry );
-                defer( function () {
-                    monitor.processPending();
+        context.onSigsReady( function () {
+            inWire.sig.readEachEntry( function ( entry ) {
+                createDemandersPending();
+                _.arrEach( installedMonitors, function ( monitor ) {
+                    monitor.demandersPending[ i ].addEntry( entry );
+                    defer( function () {
+                        monitor.processPending();
+                    } );
                 } );
             } );
         } );
@@ -2179,9 +2262,9 @@ function behDemandMonitor( defer ) {
     var monitor = {};
     monitor.inType = typeAtom( 0, null );
     monitor.outType = typeAtom( 0, null );
-    monitor.install = function ( context, inSigs, outSigs ) {
-        var inSig = inSigs.leafInfo;
-        var outSig = outSigs.leafInfo;
+    monitor.install = function ( context, inWires, outWires ) {
+        var inWire = inWires.leafInfo;
+        var outWire = outWires.leafInfo;
         
         var demanderPending = new ActivityHistory().init( {
             startMillis: context.startMillis
@@ -2211,7 +2294,7 @@ function behDemandMonitor( defer ) {
             // greater than the output history's latest time.)
             
             var outSigHistoryEndMillis =
-                entEnd( outSig.history.getLastEntry() );
+                entEnd( outWire.sig.history.getLastEntry() );
             // TODO: See if we should take out this debug code.
 //            if ( consumedEndMillis - outSigHistoryEndMillis <= 10 )
 //                debugLogForFrequency();
@@ -2256,7 +2339,7 @@ function behDemandMonitor( defer ) {
                     } ) };
                 }
                 
-                outSig.history.addEntry( {
+                outWire.sig.history.addEntry( {
                     maybeData: maybeData,
                     startMillis: monitorEntry.startMillis,
                     maybeEndMillis: monitorEntry.maybeEndMillis
@@ -2269,7 +2352,7 @@ function behDemandMonitor( defer ) {
                 var nextMonitorEntry =
                     monitorPending.getAllEntries()[ 0 ];
                 if ( nextMonitorEntry.maybeData === null ) {
-                    outSig.history.addEntry( nextMonitorEntry );
+                    outWire.sig.history.addEntry( nextMonitorEntry );
                     consumedEndMillis = entEnd( nextMonitorEntry );
                     monitorPending.forgetBeforeMillis(
                         consumedEndMillis );
@@ -2286,12 +2369,14 @@ function behDemandMonitor( defer ) {
             demandersPending: null,
             processPending: processPending
         };
-        installedMonitors.push( monitorInfo );
-        inSig.readEachEntry( function ( entry ) {
-            monitorPending.addEntry( entry );
-            defer( function () {
-                createDemandersPending();
-                processPending();
+        context.onSigsReady( function () {
+            installedMonitors.push( monitorInfo );
+            inWire.sig.readEachEntry( function ( entry ) {
+                monitorPending.addEntry( entry );
+                defer( function () {
+                    createDemandersPending();
+                    processPending();
+                } );
             } );
         } );
     };
@@ -2339,14 +2424,18 @@ function behAnimatedState(
     var updaterInternal = {};
     updaterInternal.inType = typeAtom( 0, null );
     updaterInternal.outType = typeAtom( 0, null );
-    updaterInternal.install = function ( context, inSigs, outSigs ) {
-        var inSig = inSigs.leafInfo;
-        var outSig = outSigs.leafInfo;
+    updaterInternal.install = function (
+        context, inWires, outWires ) {
         
-        inSig.readEachEntry( function ( entry ) {
+        var inWire = inWires.leafInfo;
+        var outWire = outWires.leafInfo;
+        
+        // TODO: Reindent.
+        context.onSigsReady( function () {
+        inWire.sig.readEachEntry( function ( entry ) {
             
             if ( entEnd( entry ) < updaterHistoryEndMillis ) {
-                outSig.history.addEntry( {
+                outWire.sig.history.addEntry( {
                     maybeData: { val: "" },
                     startMillis: entry.startMillis,
                     maybeEndMillis: entry.maybeEndMillis
@@ -2355,7 +2444,7 @@ function behAnimatedState(
             }
             
             if ( updaterHistoryEndMillis === 1 / 0 ) {
-                outSig.history.addEntry( {
+                outWire.sig.history.addEntry( {
                     maybeData: null,
                     startMillis: entry.startMillis,
                     maybeEndMillis: null
@@ -2364,7 +2453,7 @@ function behAnimatedState(
             } else if (
                 entry.startMillis < updaterHistoryEndMillis ) {
                 
-                outSig.history.addEntry( {
+                outWire.sig.history.addEntry( {
                     maybeData: { val: "" },
                     startMillis: entry.startMillis,
                     maybeEndMillis:
@@ -2381,10 +2470,10 @@ function behAnimatedState(
                     throw new Error();
                 
                 updaterHistoryEndMillis = entry.startMillis;
-                outSig.history.addEntry( {
+                outWire.sig.history.addEntry( {
                     maybeData: { val: JSON.stringify( currentVal ) },
-                    startMillis:
-                        outSig.history.getLastEntry().startMillis,
+                    startMillis: outWire.sig.history.getLastEntry().
+                        startMillis,
                     maybeEndMillis: { val: updaterHistoryEndMillis }
                 } );
             }
@@ -2421,7 +2510,7 @@ function behAnimatedState(
                     // designated initial state sometimes, since this
                     // other state represents the previously persisted
                     // value.
-                    outSig.history.addEntry( {
+                    outWire.sig.history.addEntry( {
                         maybeData:
                             entry.maybeEndMillis === null ? null :
                                 { val: JSON.stringify( currentVal ) },
@@ -2470,7 +2559,7 @@ function behAnimatedState(
                     Math.min( entEnd( entry ),
                         updaterHistoryEndMillis +
                             currentCooldownMillis );
-                outSig.history.addEntry( {
+                outWire.sig.history.addEntry( {
                     maybeData: { val: JSON.stringify( currentVal ) },
                     startMillis: updaterHistoryEndMillis,
                     maybeEndMillis:
@@ -2479,6 +2568,7 @@ function behAnimatedState(
                 advanceUpdaterHistoryEndMillis(
                     nextUpdaterHistoryEndMillis );
             }
+        } );
         } );
     };
     
@@ -2552,19 +2642,23 @@ function behEventfulSource( opts ) {
     var result = {};
     result.inType = typeAtom( 0, null );
     result.outType = typeAtom( 0, null );
-    result.install = function ( context, inSigs, outSigs ) {
-        var inSig = inSigs.leafInfo;
-        var outSig = outSigs.leafInfo;
+    result.install = function ( context, inWires, outWires ) {
+        var inWire = inWires.leafInfo;
+        var outWire = outWires.leafInfo;
         
         var currentVal = opts.apologyVal;
         opts.listenOnUpdate.call( {}, function ( newVal ) {
             currentVal = newVal;
         } );
+        
+        // TODO: Reindent.
+        context.onSigsReady( function () {
+        
         var responsesToGive = [];
         // TODO: See if this code is prepared for the fact that
         // readEachEntry may yield entries that overlap with each
         // other.
-        inSig.readEachEntry( function ( entry ) {
+        inWire.sig.readEachEntry( function ( entry ) {
             if ( entry.maybeEndMillis.val <= entry.startMillis ) {
                 // Don't bother queuing this response-to-give.
                 return;
@@ -2581,7 +2675,7 @@ function behEventfulSource( opts ) {
                 var rtg = responsesToGive[ 0 ];
                 if ( rtg.active )
                     break;
-                outSig.history.addEntry( {
+                outWire.sig.history.addEntry( {
                     maybeData: null,
                     startMillis: rtg.startMillis,
                     maybeEndMillis: rtg.maybeEndMillis
@@ -2616,7 +2710,7 @@ function behEventfulSource( opts ) {
                 // If the requested measurement is earlier than the
                 // measured interval, just apologize.
                 if ( rtg.maybeEndMillis.val < startToSendMillis ) {
-                    outSig.history.setData( opts.apologyVal,
+                    outWire.sig.history.setData( opts.apologyVal,
                         rtg.startMillis, rtg.maybeEndMillis.val );
                     continue;
                 }
@@ -2625,9 +2719,9 @@ function behEventfulSource( opts ) {
                     Math.max( rtg.startMillis, startToSendMillis );
                 var thisEndToSendMillis = Math.min(
                     rtg.maybeEndMillis.val, endToSendMillis );
-                outSig.history.setData( opts.apologyVal,
+                outWire.sig.history.setData( opts.apologyVal,
                     rtg.startMillis, thisStartToSendMillis );
-                outSig.history.setData( currentVal,
+                outWire.sig.history.setData( currentVal,
                     thisStartToSendMillis, thisEndToSendMillis );
                 if ( endToSendMillis < rtg.maybeEndMillis.val ) {
                     responsesToGive.unshift( {
@@ -2639,6 +2733,8 @@ function behEventfulSource( opts ) {
                 }
             }
         }, opts.intervalMillis );
+        
+        } );
     };
     return result;
 }
@@ -2657,44 +2753,48 @@ function behEventfulTarget( opts ) {
     var result = {};
     result.inType = typeAtom( 0, null );
     result.outType = typeOne();
-    result.install = function ( context, inSigs, outSigs ) {
-        var inSig = inSigs.leafInfo;
+    result.install = function ( context, inWires, outWires ) {
+        var inWire = inWires.leafInfo;
         
         var sentMillis = -1 / 0;
         
-        inSig.readEachEntry( function ( entry ) {
-            
-            // TODO: Give Lathe.js a setTimeout equivalent which does
-            // this. The point is that setTimeout has a lower limit on
-            // its time interval, so Lathe.js's _.defer() might
-            // actually use a more responsive technique when the
-            // interval is small, such as postMessage, setImmediate,
-            // process.nextTick, or requestAnimationFrame.
-            //
-            // TODO: See if 10 ms is the right lower bound to use
-            // here.
-            //
-            // TODO: See if we should somehow protect against cases
-            // where _.defer( func ) actually fires sooner than we
-            // want it to.
-            //
-            function quickSetTimeout( millis, func ) {
-                if ( millis < 10 )
-                    _.defer( func );
-                else
-                    setTimeout( func, millis );
-            }
-            
-            quickSetTimeout( entry.startMillis - new Date().getTime(),
-                function () {
+        context.onSigsReady( function () {
+            inWire.sig.readEachEntry( function ( entry ) {
                 
-                // In case the quickSetTimeout calls get out of order,
-                // don't send this value.
-                if ( entry.startMillis < sentMillis )
-                    return;
-                sentMillis = entry.startMillis;
+                // TODO: Give Lathe.js a setTimeout equivalent which
+                // does this. The point is that setTimeout has a lower
+                // limit on its time interval, so Lathe.js's _.defer()
+                // might actually use a more responsive technique when
+                // the interval is small, such as postMessage,
+                // setImmediate, process.nextTick, or
+                // requestAnimationFrame.
+                //
+                // TODO: See if 10 ms is the right lower bound to use
+                // here.
+                //
+                // TODO: See if we should somehow protect against
+                // cases where _.defer( func ) actually fires sooner
+                // than we want it to.
+                //
+                function quickSetTimeout( millis, func ) {
+                    if ( millis < 10 )
+                        _.defer( func );
+                    else
+                        setTimeout( func, millis );
+                }
                 
-                opts.onUpdate.call( {}, entry.maybeData );
+                quickSetTimeout(
+                    entry.startMillis - new Date().getTime(),
+                    function () {
+                    
+                    // In case the quickSetTimeout calls get out of
+                    // order, don't send this value.
+                    if ( entry.startMillis < sentMillis )
+                        return;
+                    sentMillis = entry.startMillis;
+                    
+                    opts.onUpdate.call( {}, entry.maybeData );
+                } );
             } );
         } );
     };

@@ -39,7 +39,7 @@
 // TODO: Implement persistence for resources, and perhaps implement a
 // localStorage resource to demonstrate it with.
 //
-// TODO: Reimplement resources in terms of makeLinkedSigPair objects
+// TODO: Reimplement resources in terms of makeLinkedWirePair objects
 // instead of membranes.
 
 
@@ -1260,6 +1260,42 @@ function makeLinkedSigPair( startMillis ) {
     writable.history = history;
     
     return { readable: readable, writable: writable };
+}
+
+function makeLinkedWirePair( context, startMillis ) {
+    
+    var isMaster = false;
+    
+    var result = {};
+    result.isReadFrom_ = null;
+    result.isWrittenTo_ = null;
+    
+    result.readable = {};
+    result.readable.sig = null;
+    result.readable.pair_ = result;
+    
+    result.writable = {};
+    result.writable.sig = null;
+    result.writable.pair_ = result;
+    result.writable.readSigFrom = function ( inWire ) {
+        if ( result.isReadFrom_ !== null
+            || inWire.pair_.isWrittenTo_ !== null )
+            throw new Error();
+        result.isReadFrom_ = inWire.pair_;
+        inWire.pair_.isWrittenTo_ = result;
+    };
+    
+    context.onTimeToMakeSigs( function () {
+        if ( result.isReadFrom_ !== null )
+            return;
+        var sigPair = makeLinkedSigPair( startMillis );
+        for ( var p = result; p !== null; p = p.isWrittenTo_ ) {
+            p.readable.sig = sigPair.readable;
+            p.writable.sig = sigPair.writable;
+        }
+    } );
+    
+    return result;
 }
 
 function getAndForgetDemanderResponse( demander ) {
