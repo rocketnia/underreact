@@ -1,0 +1,30 @@
+
+behId :: x -o x
+behSeq (x -o y) (y -o z) :: (x -o z)
+behClosure ((e * x) -o y) :: e -o (x -o y)
+behCall :: ((x -o y) * x) -o y
+
+behDup :: !x -o (!x * !x)
+behDedup :: !x -o x  -- not in Underreact (since there's no !x)
+behDrop :: !x -o 1
+behMerge :: (x + x) -o x
+behVacuous :: 0 -o x
+behDisjoin :: (x * (y + z)) -o ((x * y) + (x * z))
+
+behDelay
+behFmap
+behSplit
+behZip
+behYield
+behDemandMonitor
+behAnimatedState
+behEventfulSource
+behEventfulTarget
+
+
+
+(a -o b) -o (c -o d)
+-(-a ^ b) ^ -c ^ d
+(a * -b) ^ -c ^ d
+(c -o (a * -b)) ^ d
+-d -o (

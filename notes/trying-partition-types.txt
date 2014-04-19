@@ -1,0 +1,18 @@
+// At t p
+typeAtom( offsetMillis, carrierPartitionName, leafInfo )
+
+// Addr t p p'
+typePartitionAddress( offsetMillis, carrierPartitionName, targetPartitionName, leafInfo )
+
+// (p =#Addr t p) -> r
+typePartitionAddressAnytimeFn( offsetMillis, carrierPartitionName, targetPartitionName, responseType, leafInfo )
+
+// Wat t p
+typeWaywardAtom( offsetMillis, carrierPartitionName, leafInfo )
+
+behCross :: (Addr t p p' * x) -> (Addr t p' p * x')
+  where x and x' differ only on leaves a and a'
+  where a is at (t, p) and a' is at (t, p')
+
+
+behCross :: f
