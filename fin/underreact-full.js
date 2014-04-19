@@ -3549,7 +3549,7 @@ function arrMin( arr, func ) {
 }
 
 function arrMax( arr, func ) {
-    return _.arrFoldl( 1 / 0, arr, function ( soFar, item ) {
+    return _.arrFoldl( -1 / 0, arr, function ( soFar, item ) {
         return Math.max( soFar, func( item ) );
     } );
 }
@@ -3681,6 +3681,11 @@ ActivityHistory.prototype.getFirstEntry = function () {
     // NOTE: This is a convenience method for getAllEntries, but it
     // also avoids copying the Array.
     return this.entries_[ 0 ];
+};
+ActivityHistory.prototype.getLastEntry = function () {
+    // NOTE: This is a convenience method for getAllEntries, but it
+    // also avoids copying the Array.
+    return this.entries_[ this.entries_.length - 1 ];
 };
 ActivityHistory.prototype.isEmpty = function () {
     // NOTE: This is a convenience method for getAllEntries, but it
@@ -4587,6 +4592,7 @@ function makeLinkedSigPair( startMillis ) {
     };
     readable.readEachEntry = function ( processEntry ) {
         // NOTE: This is a convenience method.
+        // NOTE: This may yield entries that overlap with each other.
         readable.syncOnAdd( function () {
             var entries = readable.history.getAllEntries();
             readable.history.forgetBeforeMillis( entsEnd( entries ) );
@@ -5074,30 +5080,100 @@ DispatcherResource.prototype.receiveMessage = function ( message ) {
 // OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
+function UnderreactType() {}
+UnderreactType.prototype.init_ = function ( properties ) {
+    var self = this;
+    _.objOwnEach( properties, function ( k, v ) {
+        self[ k ] = v;
+    } );
+    return self;
+};
+
 // NOTE: The leafInfo parameters aren't actually part of the types for
 // equality purposes, but we use them to annotate the type tree with
 // metadata.
 function typeAtom( offsetMillis, leafInfo ) {
     if ( !isValidDuration( offsetMillis ) )
         throw new Error();
-    return { op: "atom",
-        offsetMillis: offsetMillis, leafInfo: leafInfo };
+    return new UnderreactType().init_( { op: "atom",
+        offsetMillis: offsetMillis, leafInfo: leafInfo } );
 }
 function typeTimes( first, second ) {
-    return { op: "times", first: first, second: second };
+    if ( !(first instanceof UnderreactType) )
+        throw new Error();
+    if ( !(second instanceof UnderreactType) )
+        throw new Error();
+    return new UnderreactType().init_( { op: "times",
+        first: first, second: second } );
 }
 function typeOne() {
-    return { op: "one" };
+    return new UnderreactType().init_( { op: "one" } );
 }
 function typePlus( left, right ) {
-    return { op: "plus", left: left, right: right };
+    if ( !(left instanceof UnderreactType) )
+        throw new Error();
+    if ( !(right instanceof UnderreactType) )
+        throw new Error();
+    return new UnderreactType().init_( { op: "plus",
+        left: left, right: right } );
 }
 function typeZero() {
-    return { op: "zero" };
+    return new UnderreactType().init_( { op: "zero" } );
 }
 function typeAnytimeFn( demand, response, leafInfo ) {
-    return { op: "anytimeFn",
-        demand: demand, response: response, leafInfo: leafInfo };
+    if ( !(demand instanceof UnderreactType) )
+        throw new Error();
+    if ( !(response instanceof UnderreactType) )
+        throw new Error();
+    return new UnderreactType().init_( { op: "anytimeFn",
+        demand: demand, response: response, leafInfo: leafInfo } );
+}
+
+function typeIsStaticList( type ) {
+    var op = type.op;
+    if ( op === "atom" ) {
+        return false;
+    } else if ( op === "times" ) {
+        return typeIsStaticList( type.second );
+    } else if ( op === "one" ) {
+        return true;
+    } else if ( op === "plus" ) {
+        return false;
+    } else if ( op === "zero" ) {
+        return false;
+    } else if ( op === "anytimeFn" ) {
+        return false;
+    } else {
+        throw new Error();
+    }
+}
+
+function typeToString( type ) {
+    var op = type.op;
+    if ( op === "atom" ) {
+        return "A" + type.offsetMillis;
+    } else if ( op === "times" ) {
+        if ( typeIsStaticList( type ) ) {
+            var innerResults = [];
+            for ( var t = type; t.op === "times"; t = t.second )
+                innerResults.push( typeToString( t.first ) );
+            return "[ " + innerResults.join( ", " ) + " ]";
+        }
+        return "(" + typeToString( type.first ) + " * " +
+            typeToString( type.second ) + ")";
+    } else if ( op === "one" ) {
+        return "1";
+    } else if ( op === "plus" ) {
+        return "(" + typeToString( type.left ) + " + " +
+            typeToString( type.right ) + ")";
+    } else if ( op === "zero" ) {
+        return "0";
+    } else if ( op === "anytimeFn" ) {
+        return "(" + typeToString( type.demand ) + " -> " +
+            typeToString( type.response ) + ")";
+    } else {
+        throw new Error();
+    }
 }
 
 function typesAreEqual( offsetMillis, a, b ) {
@@ -5182,7 +5258,7 @@ function typesUnify( a, b ) {
 
 function getAllCoordinates( type ) {
     return _.acc( function ( y ) {
-        eachTypeLeafNode( type, function ( type ) {
+        eachTypeLeafNodeOver( type, function ( type ) {
             if ( type.op === "atom" ) {
                 y( { offsetMillis: type.offsetMillis } );
             } else if ( type.op === "anytimeFn" ) {
@@ -5467,7 +5543,7 @@ function behSeq( behOne, behTwo ) {
     
     var result = {};
     result.inType = behOne.inType;
-    result.outType =
+    result.outType = diff.offsetMillis === null ? behTwo.outType :
         typePlusOffsetMillis( diff.offsetMillis, behTwo.outType );
     result.install = function ( context, inSigs, outSigs ) {
         var pairs =
@@ -5678,10 +5754,10 @@ function consumeEarliestEntries( pendingHistories, body ) {
                 };
             }
         } );
-        var endMillis = _.arrFoldl( -1 / 0, earliestEntries,
+        var endMillis = _.arrFoldl( 1 / 0, earliestEntries,
             function ( endMillis, entry ) {
             
-            return Math.max( endMillis, entEnd( entry ) );
+            return Math.min( endMillis, entEnd( entry ) );
         } );
         _.arrEach( pendingHistories, function ( pending, i ) {
             var earliestEntry = earliestEntries[ i ];
@@ -5701,6 +5777,19 @@ function consumeEarliestEntries( pendingHistories, body ) {
         } );
         body( earliestEntries );
     }
+}
+
+// TODO: See if this would come in handy in more places. Right now we
+// only use it once, and that's just an optimization.
+function consumeEarliestEntriesCapped(
+    earliestStartMillis, pendingHistories, body ) {
+    
+    _.arrEach( pendingHistories, function ( pending ) {
+        while ( pending.length !== 0
+            && entEnd( pending[ 0 ] ) <= earliestStartMillis )
+            pending.shift();
+    } );
+    consumeEarliestEntries( pendingHistories, body );
 }
 
 // TODO: See what this would be called in Sirea.
@@ -5736,8 +5825,8 @@ function behLeft( beh, otherType ) {
 }
 function behMirror( origLeftType, origRightType ) {
     var result = {};
-    result.inType = typeTimes( origLeftType, origRightType );
-    result.outType = typeTimes( origRightType, origLeftType );
+    result.inType = typePlus( origLeftType, origRightType );
+    result.outType = typePlus( origRightType, origLeftType );
     result.install = function ( context, inSigs, outSigs ) {
         behId( origLeftType ).install( context,
             inSigs.left, outSigs.right );
@@ -5799,8 +5888,8 @@ function behAssocrs( pitcherType, ballType, catcherType ) {
 // exponential.)
 //
 function behMerge( type ) {
-    var informantsAvailable = makeOffsetMap();
-    var informantsNeeded = makeOffsetMap();
+    var informantsAvailable = makeOffsetMillisMap();
+    var informantsNeeded = makeOffsetMillisMap();
     eachTypeLeafNodeOver( type, function ( type, unused ) {
         if ( type.op === "atom" ) {
             informantsAvailable.set( type.offsetMillis, true );
@@ -6044,6 +6133,9 @@ function behMerge( type ) {
                     if ( !!informantPair )
                         processInformantsPending( type.offsetMillis );
                 };
+                // TODO: See if this code is prepared for the fact
+                // that readEachEntry may yield entries that overlap
+                // with each other.
                 inSigLeft.readEachEntry( function ( entry ) {
                     leftPending.push( entry );
                     processMergePending();
@@ -6260,7 +6352,7 @@ function behDisjoin( branchType, leftType, rightType ) {
         var bins = [];
         function getBin( offsetMillis ) {
             return _.arrAny( bins, function ( bin ) {
-                return bin.offsetMillis === offsetMillis;
+                return bin.offsetMillis === offsetMillis && bin;
             } );
         }
         eachTypeLeafNodeOver(
@@ -6284,8 +6376,12 @@ function behDisjoin( branchType, leftType, rightType ) {
                     conditionPending: new ActivityHistory().init( {
                         startMillis: context.startMillis
                     } ),
+                    finalCondition: null,
                     dataPending: pending
                 } );
+                // TODO: See if this code is prepared for the fact
+                // that readEachEntry may yield entries that overlap
+                // with each other.
                 inSig.readEachEntry( function ( entry ) {
                     pending.push( entry );
                     processPending();
@@ -6311,10 +6407,13 @@ function behDisjoin( branchType, leftType, rightType ) {
                             startMillis: context.startMillis
                         } );
                     if ( !!bin )
-                        informants.push( {
+                        bin.informants.push( {
                             condition: condition,
                             history: informantHistory
                         } );
+                    // TODO: See if this code is prepared for the fact
+                    // that readEachEntry may yield entries that
+                    // overlap with each other.
                     inSig.readEachEntry( function ( entry ) {
                         outSig.history.addEntry( entry );
                         if ( !!bin ) {
@@ -6349,7 +6448,6 @@ function behDisjoin( branchType, leftType, rightType ) {
                     var addConditionEntry =
                         function ( conditionEntry ) {
                         
-                        didSomething = true;
                         var endMillis = entEnd( conditionEntry );
                         _.arrEach( bin.informants,
                             function ( informant ) {
@@ -6360,8 +6458,40 @@ function behDisjoin( branchType, leftType, rightType ) {
                         _.arrEach( bin.branchesPending,
                             function ( branch ) {
                             
+                            // TODO: See if we should also check if
+                            // the entry would be too early to make a
+                            // difference to this history.
+                            if ( branch.finalCondition !== null )
+                                return;
+                            didSomething = true;
                             branch.conditionPending.addEntry(
                                 conditionEntry );
+                        } );
+                    };
+                    var addFinalConditionEntry =
+                        function ( condition, startMillis ) {
+                        
+                        _.arrEach( bin.informants,
+                            function ( informant ) {
+                            
+                            informant.history.forgetBeforeMillis(
+                                1 / 0 );
+                        } );
+                        _.arrEach( bin.branchesPending,
+                            function ( branch ) {
+                            
+                            var prevEndMillis = entEnd(
+                                branch.conditionPending.
+                                    getLastEntry() );
+                            if ( prevEndMillis === 1 / 0 )
+                                return;
+                            didSomething = true;
+                            branch.conditionPending.addEntry( {
+                                maybeData: null,
+                                startMillis: startMillis,
+                                maybeEndMillis: null
+                            } );
+                            branch.finalCondition = condition;
                         } );
                     };
                     
@@ -6401,13 +6531,14 @@ function behDisjoin( branchType, leftType, rightType ) {
                                 return -1 / 0;
                             return entEnd( entry );
                         } );
-                        if ( bothInactive !== -1 / 0 )
+                        if ( bothInactive === 1 / 0 )
+                            addFinalConditionEntry(
+                                "bothInactive", startMillis );
+                        else if ( bothInactive !== -1 / 0 )
                             addConditionEntry( {
-                                maybeData: null,
+                                maybeData: { val: "bothInactive" },
                                 startMillis: startMillis,
-                                maybeEndMillis:
-                                    bothInactive === 1 / 0 ? null :
-                                        { val: bothInactive }
+                                maybeEndMillis: { val: bothInactive }
                             } );
                         
                         var allNegatory = arrMin( bin.informants,
@@ -6422,13 +6553,14 @@ function behDisjoin( branchType, leftType, rightType ) {
                                 return -1 / 0;
                             return entEnd( entry );
                         } );
-                        if ( allNegatory !== -1 / 0 )
+                        if ( allNegatory === 1 / 0 )
+                            addFinalConditionEntry(
+                                condition, startMillis );
+                        else if ( allNegatory !== -1 / 0 )
                             addConditionEntry( {
                                 maybeData: { val: condition },
                                 startMillis: startMillis,
-                                maybeEndMillis:
-                                    allNegatory === 1 / 0 ? null :
-                                        { val: allNegatory }
+                                maybeEndMillis: { val: allNegatory }
                             } );
                     } );
                 } while ( didSomething );
@@ -6457,23 +6589,22 @@ function behDisjoin( branchType, leftType, rightType ) {
                             maybeEndMillis: dataEntry.maybeEndMillis
                         };
                         
+                        var condition =
+                            conditionEntry.maybeData === null ?
+                                branch.finalCondition :
+                                conditionEntry.maybeData.val;
+                        
                         if ( dataEntry.maybeData === null ) {
                             branch.outSigLeft.history.addEntry(
                                 nullEntry );
                             branch.outSigRight.history.addEntry(
                                 nullEntry );
-                            
-                        } else if ( conditionEntry.maybeData.val ===
-                            "left" ) {
-                            
+                        } else if ( condition === "left" ) {
                             branch.outSigLeft.history.addEntry(
                                 dataEntry );
                             branch.outSigRight.history.addEntry(
                                 nullEntry );
-                            
-                        } else if ( conditionEntry.maybeData.val ===
-                            "right" ) {
-                            
+                        } else if ( condition === "right" ) {
                             branch.outSigLeft.history.addEntry(
                                 nullEntry );
                             branch.outSigRight.history.addEntry(
@@ -6544,7 +6675,7 @@ function behClosure( beh ) {
     result.install = function (
         context, inSigsEncapsulated, outSigsFunc ) {
         
-        var outSigFunc = outSigsFunc.pairInfo;
+        var outSigFunc = outSigsFunc.leafInfo;
         
         var invocations = [];
         
@@ -6557,9 +6688,10 @@ function behClosure( beh ) {
             if ( type.op === "atom" ) {
                 inSig.readEachEntry( function ( entry ) {
                     _.arrEach( invocations, function ( invocation ) {
-                        var writable = get( invocation.writables );
-                        delayAddEntry(
-                            writable, invocation.delayMillis, entry );
+                        var responseSig =
+                            get( invocation.writables ).leafInfo;
+                        delayAddEntry( responseSig,
+                            invocation.delayMillis, entry );
                     } );
                 } );
             } else if ( type.op === "anytimeFn" ) {
@@ -6580,7 +6712,8 @@ function behClosure( beh ) {
                 context.startMillis, encapsulatedType );
             
             eachTypeLeafNodeOver(
-                inSigEncapsulated, delayedEncapsulatedPairs.writables,
+                inSigsEncapsulated,
+                delayedEncapsulatedPairs.writables,
                 function ( type, inSig, outSig ) {
                 
                 if ( type.op === "atom" ) {
@@ -6615,9 +6748,9 @@ function behClosure( beh ) {
             // we're using here, we're committing no crimes against
             // duration coupling.
             //
-            behSigs(
+            behSeqs(
                 behDisjoin( encapsulatedType, paramType, typeOne() ),
-                typeEither(
+                behEither(
                     beh,
                     behDrop(
                         typeTimes( encapsulatedType, typeOne() ) )
@@ -6729,7 +6862,9 @@ function behSplit() {
                 && _.likeArray( entry.maybeData.val )
                 && entry.maybeData.val.length === 2 )
                 direction = entry.maybeData.val[ 0 ];
-            if ( !(direction === "<" || direction === ">") )
+            if ( !(direction === null
+                || direction === "<"
+                || direction === ">") )
                 throw new Error();
             outSigLeft.history.addEntry( {
                 maybeData: direction === "<" ?
@@ -6758,33 +6893,41 @@ function behZip() {
         var inSigSecond = inSigs.second.leafInfo;
         var outSig = outSigs.leafInfo;
         
-        var entriesFirst = [];
-        var entriesSecond = [];
-        inSigFirst.readEachEntry( function ( entry ) {
-            entriesFirst.push( entry );
+        var sentMillis = -1 / 0;
+        
+        inSigFirst.syncOnAdd( function () {
             sendOut();
         } );
-        inSigSecond.readEachEntry( function ( entry ) {
-            entriesSecond.push( entry );
+        inSigSecond.syncOnAdd( function () {
             sendOut();
         } );
         function sendOut() {
             // TODO: See if this should use consumeEarliestEntries.
             // For that matter, see if consumeEarliestEntries should
             // use this!
-            if ( entriesFirst.length === 0
-                || entriesSecond.length === 0 )
-                return;
+            var entriesFirst = inSigFirst.history.getAllEntries();
+            var entriesSecond = inSigSecond.history.getAllEntries();
             var endFirstMillis = entsEnd( entriesFirst );
             var endSecondMillis = entsEnd( entriesSecond );
             var endToSendMillis =
                 Math.min( endFirstMillis, endSecondMillis );
+            if ( endToSendMillis <= sentMillis )
+                return;
             eachZipEnts( 0, entriesFirst, entriesSecond,
                 function ( maybeFirstData, maybeSecondData,
                     startMillis, endMillis ) {
                 
+                // NOTE: At this point, if we see inactivity on either
+                // of the signals, it may actually be activity that
+                // was forgotten via forgetBeforeMillis. To address
+                // this, we skip any parts of this loop that occur
+                // before sentMillis.
+                if ( endMillis <= sentMillis )
+                    return;
+                
                 if ( endToSendMillis <= startMillis )
                     return;
+                
                 var thisEndToSendMillis =
                     Math.min( endToSendMillis, endMillis );
                 
@@ -6806,10 +6949,9 @@ function behZip() {
                         null : { val: thisEndToSendMillis }
                 } );
             } );
-            while ( entEnd( entriesFirst[ 0 ] ) <= endToSendMillis )
-                entriesFirst.shift();
-            while ( entEnd( entriesSecond[ 0 ] ) <= endToSendMillis )
-                entriesSecond.shift();
+            inSigFirst.history.forgetBeforeMillis( endToSendMillis );
+            inSigSecond.history.forgetBeforeMillis( endToSendMillis );
+            sentMillis = endToSendMillis;
         }
     };
     return result;
@@ -6872,7 +7014,7 @@ function behYield( delayMillis ) {
 // it.
 function connectMembraneToBehaviors( pairHalf, context, delayToBeh ) {
     
-    var pool = makeOffsetMap();
+    var pool = makeOffsetMillisMap();
     var demandPermanentUntilMillis = -1 / 0;
     
     function getOrMakePoolEntry( delayMillis, startMillis ) {
@@ -6919,15 +7061,22 @@ function connectMembraneToBehaviors( pairHalf, context, delayToBeh ) {
             // loops through the whole pool.
             raiseOtherOutPermanentUntilMillis();
         } );
+        var onBeginObj = makeOnBegin();
         behSeqs(
             behDupPar(
                 behDelay( delayMillis, typeAtom( 0, null ) ),
                 beh
             ),
             behZip()
-        ).install( context,
+        ).install(
+            {
+                startMillis: startMillis,
+                membrane: context.membrane,
+                onBegin: onBeginObj.onBegin
+            },
             typeAtom( 0, demandPair.readable ),
             typeAtom( delayMillis, demandAndResponsePair.writable ) );
+        onBeginObj.begin();
         bin.push( poolEntry );
         return poolEntry;
     }
@@ -6948,7 +7097,7 @@ function connectMembraneToBehaviors( pairHalf, context, delayToBeh ) {
     }
     
     function retractPoolBeforeNextStartMillis( nextStartMillis ) {
-        var newPool = makeOffsetMap();
+        var newPool = makeOffsetMillisMap();
         pool.each( function ( delayMillis, bin ) {
             var newBin = _.arrKeep( bin, function ( poolEntry ) {
                 return poolEntry.nextStartMillis < nextStartMillis;
@@ -7004,6 +7153,25 @@ function connectMembraneToBehaviors( pairHalf, context, delayToBeh ) {
         retractPoolBeforeNextStartMillis(
             demandPermanentUntilMillis );
     } );
+}
+
+// TODO: See if we should keep this utilities around, and if so,
+// where.
+var debugLogForFrequencyLog = [];
+function debugLogForFrequencyGetLength() {
+    var then = new Date().getTime() - 1000;
+    while ( debugLogForFrequencyLog.length !== 0
+        && debugLogForFrequencyLog[ 0 ] < then )
+        debugLogForFrequencyLog.shift();
+    return debugLogForFrequencyLog.length;
+}
+function debugLogForFrequency() {
+    var now = new Date().getTime();
+    debugLogForFrequencyLog.push( now );
+    var then = now - 1000;
+    while ( debugLogForFrequencyLog.length !== 0
+        && debugLogForFrequencyLog[ 0 ] < then )
+        debugLogForFrequencyLog.shift();
 }
 
 // NOTE: We use a defer procedure as a parameter here, so that
@@ -7081,13 +7249,34 @@ function behDemandMonitor( defer ) {
                 monitorPending.getAllEntries().slice();
             var consumedEndMillis = monitorEntries[ 0 ].startMillis;
             
-            consumeEarliestEntries( [ monitorEntries ].concat(
-                _.arrMap( monitorInfo.demandersPending,
+            // TODO: This part of the code sure is called a lot. It
+            // probably has to do with the fact that every demand
+            // update triggers this processPending(). We should
+            // eventually see how much redundancy we can eliminate
+            // by doing a topological sort or by using David's
+            // touch-then-propagate technique
+            // (http://lambda-the-ultimate.org/node/4453). Until then,
+            // there's still plenty of room for naive optimization
+            // here. (For instance, the next thing we can do is to
+            // exit fast if the monitor's latest active time is
+            // greater than the output history's latest time.)
+            
+            var outSigHistoryEndMillis =
+                entEnd( outSig.history.getLastEntry() );
+            // TODO: See if we should take out this debug code.
+//            if ( consumedEndMillis - outSigHistoryEndMillis <= 10 )
+//                debugLogForFrequency();
+//            sometimesLog( debugLogForFrequencyGetLength() );
+            consumeEarliestEntriesCapped(
+                outSigHistoryEndMillis,
+                [ monitorEntries ].concat( _.arrMap(
+                    monitorInfo.demandersPending,
                     function ( demanderPending ) {
                     
                     return demanderPending.getAllEntries().slice();
-                } )
-            ), function ( earliestEntries ) {
+                } ) ),
+                function ( earliestEntries ) {
+                
                 var monitorEntry = earliestEntries[ 0 ];
                 var demandEntries = _.arrCut( earliestEntries, 1 );
                 
@@ -7107,15 +7296,18 @@ function behDemandMonitor( defer ) {
                     } );
                     maybeData = { val: _.acc( function ( y ) {
                         _.arrEach( demandEntries, function ( entry ) {
-                            if ( set.has( entry ) )
+                            if ( entry.maybeData === null )
                                 return;
-                            set.set( entry, true );
-                            y( entry );
+                            var data = entry.maybeData.val;
+                            if ( set.has( data ) )
+                                return;
+                            set.set( data, true );
+                            y( data );
                         } );
                     } ) };
                 }
                 
-                outSig.addEntry( {
+                outSig.history.addEntry( {
                     maybeData: maybeData,
                     startMillis: monitorEntry.startMillis,
                     maybeEndMillis: monitorEntry.maybeEndMillis
@@ -7128,7 +7320,7 @@ function behDemandMonitor( defer ) {
                 var nextMonitorEntry =
                     monitorPending.getAllEntries()[ 0 ];
                 if ( nextMonitorEntry.maybeData === null ) {
-                    outSig.addEntry( nextMonitorEntry );
+                    outSig.history.addEntry( nextMonitorEntry );
                     consumedEndMillis = entEnd( nextMonitorEntry );
                     monitorPending.forgetBeforeMillis(
                         consumedEndMillis );
@@ -7143,19 +7335,234 @@ function behDemandMonitor( defer ) {
         }
         var monitorInfo = {
             demandersPending: null,
-            monitorPending: monitorPending,
             processPending: processPending
         };
         installedMonitors.push( monitorInfo );
         inSig.readEachEntry( function ( entry ) {
             monitorPending.addEntry( entry );
             defer( function () {
+                createDemandersPending();
                 processPending();
             } );
         } );
     };
     
     return { demander: demander, monitor: monitor };
+}
+
+// NOTE: We use a defer procedure as a parameter here, so that
+// feedback loops don't grind the entire page to a halt. However,
+// those loops will still execute forever, so be careful.
+//
+// NOTE: This only supports JavaScript numbers as states. When
+// multiple rules apply at once, we choose the rule which leads to the
+// lowest state. If that still doesn't narrow it down, we choose the
+// rule with the lowest cooldown. If we need to choose a rule at the
+// same instant the ruleset is updating, we use the older ruleset.
+//
+// TODO: Implement resource spaces so that we can provide dynamic
+// acquisition of animated state resources while permitting external
+// observation and extensibility.
+//
+// TODO: This currently returns a demander behavior and a monitor
+// behavior. Return a resource control behavior of some sort as well.
+//
+function behAnimatedState(
+    defer, initialState, compareStates, transitions ) {
+    
+    var deMonIn = behDemandMonitor( defer );
+    var deMonOut = behDemandMonitor( defer );
+    
+    var currentVal = initialState;
+    var updaterHistoryEndMillis = -1 / 0;
+    var currentCooldownMillis = 0;
+    function advanceUpdaterHistoryEndMillis( newMillis ) {
+        newMillis = Math.max( newMillis, updaterHistoryEndMillis );
+        currentCooldownMillis -=
+            newMillis - updaterHistoryEndMillis;
+        updaterHistoryEndMillis = newMillis;
+    }
+    
+    // TODO: Whoops, this behavior doesn't preserve duration coupling.
+    // See if there's another way to do this that does. Fortunately,
+    // the duration coupling violation is completely internal to this
+    // state resource.
+    var updaterInternal = {};
+    updaterInternal.inType = typeAtom( 0, null );
+    updaterInternal.outType = typeAtom( 0, null );
+    updaterInternal.install = function ( context, inSigs, outSigs ) {
+        var inSig = inSigs.leafInfo;
+        var outSig = outSigs.leafInfo;
+        
+        inSig.readEachEntry( function ( entry ) {
+            
+            if ( entEnd( entry ) < updaterHistoryEndMillis ) {
+                outSig.history.addEntry( {
+                    maybeData: { val: "" },
+                    startMillis: entry.startMillis,
+                    maybeEndMillis: entry.maybeEndMillis
+                } );
+                return;
+            }
+            
+            if ( updaterHistoryEndMillis === 1 / 0 ) {
+                outSig.history.addEntry( {
+                    maybeData: null,
+                    startMillis: entry.startMillis,
+                    maybeEndMillis: null
+                } );
+                
+            } else if (
+                entry.startMillis < updaterHistoryEndMillis ) {
+                
+                outSig.history.addEntry( {
+                    maybeData: { val: "" },
+                    startMillis: entry.startMillis,
+                    maybeEndMillis:
+                        { val: updaterHistoryEndMillis }
+                } );
+                
+            } else if (
+                updaterHistoryEndMillis < entry.startMillis ) {
+                
+                // NOTE: This case happens once, at the very
+                // beginning of the app. (We do this sanity check to
+                // make sure that's actually true.)
+                if ( updaterHistoryEndMillis !== -1 / 0 )
+                    throw new Error();
+                
+                updaterHistoryEndMillis = entry.startMillis;
+                outSig.history.addEntry( {
+                    maybeData: { val: JSON.stringify( currentVal ) },
+                    startMillis:
+                        outSig.history.getLastEntry().startMillis,
+                    maybeEndMillis: { val: updaterHistoryEndMillis }
+                } );
+            }
+            
+            var rules = entry.maybeData === null ? [] :
+                _.arrMappend( entry.maybeData.val, function ( rule ) {
+                    if ( !(true
+                        && _.likeArray( rule )
+                        && rule.length === 2
+                        && _.isString( rule[ 0 ] )
+                        && _.hasOwn( transitions, "" + rule[ 0 ] )
+                    ) )
+                        return [];
+                    return transitions[ "" + rule[ 0 ] ].call( {},
+                        rule[ 1 ] );
+                } );
+            while ( updaterHistoryEndMillis < entEnd( entry ) ) {
+                var currentRules =
+                    _.arrMappend( rules, function ( rule ) {
+                        var replacement = rule( currentVal );
+                        return replacement === null ? [] :
+                            [ replacement ];
+                    } );
+                
+                if ( currentRules.length === 0 ) {
+                    // TODO: See if this should reset the state
+                    // instead of prolonging the current state. After
+                    // all, if this state resource is to be a
+                    // discoverable resource, there oughta be some
+                    // justification as to why it started at its
+                    // initial value. On the other hand, if this is to
+                    // be a persistent resource, we'll actually want
+                    // it to start in a state other than its
+                    // designated initial state sometimes, since this
+                    // other state represents the previously persisted
+                    // value.
+                    outSig.history.addEntry( {
+                        maybeData:
+                            entry.maybeEndMillis === null ? null :
+                                { val: JSON.stringify( currentVal ) },
+                        startMillis: entry.startMillis,
+                        maybeEndMillis: entry.maybeEndMillis
+                    } );
+                    
+                    // NOTE: We don't let inactivity satisfy the
+                    // cooldown. That helps keep this state resource
+                    // deterministic even if there are pauses in the
+                    // app activity signal.
+                    if ( entry.maybeData === null )
+                        updaterHistoryEndMillis = entEnd( entry );
+                    else
+                        advanceUpdaterHistoryEndMillis(
+                            entEnd( entry ) );
+                    return;
+                }
+                
+                var favoriteRule = 0 < currentCooldownMillis ? {
+                    newVal: currentVal,
+                    cooldownMillis: currentCooldownMillis
+                } : _.arrFoldl(
+                    currentRules[ 0 ],
+                    _.arrCut( currentRules, 1 ),
+                    function ( a, b ) {
+                        var comparedStates =
+                            compareStates( a.newVal, b.newVal );
+                        return comparedStates < 0 ? a :
+                            0 < comparedStates ? b :
+                            a.cooldownMillis < b.cooldownMillis ? a :
+                            b;
+                    } );
+                
+                currentVal = favoriteRule.newVal;
+                currentCooldownMillis = favoriteRule.cooldownMillis;
+                
+                // TODO: If we ever want to support fractional values
+                // for cooldownMillis, fix this code. It adds a very
+                // large number (updaterHistoryEndMillis) to what
+                // could be a very small fraction, and then it
+                // subtracts the difference from the cooldown (via
+                // advanceUpdaterHistoryEndMillis), rather than just
+                // setting the cooldown to zero.
+                var nextUpdaterHistoryEndMillis =
+                    Math.min( entEnd( entry ),
+                        updaterHistoryEndMillis +
+                            currentCooldownMillis );
+                outSig.history.addEntry( {
+                    maybeData: { val: JSON.stringify( currentVal ) },
+                    startMillis: updaterHistoryEndMillis,
+                    maybeEndMillis:
+                        { val: nextUpdaterHistoryEndMillis }
+                } );
+                advanceUpdaterHistoryEndMillis(
+                    nextUpdaterHistoryEndMillis );
+            }
+        } );
+    };
+    
+    var updater = behSeqs(
+        behFmap( function ( val ) {
+            return [];
+        } ),
+        deMonIn.monitor,
+        updaterInternal,
+        deMonOut.demander
+    );
+    
+    var result = {};
+    result.demander = behSeqs(
+        behDupPar( updater, deMonIn.demander ),
+        behSnd( typeOne(), typeOne() )
+    );
+    result.monitor = behSeqs(
+        behDupPar( updater, behSeqs(
+            deMonOut.monitor,
+            behFmap( function ( responses ) {
+                var filteredResponses =
+                    _.arrKeep( responses, function ( it ) {
+                        return it !== "";
+                    } );
+                if ( filteredResponses.length !== 1 )
+                    throw new Error();
+                return filteredResponses[ 0 ];
+            } )
+        ) ),
+        behSnd( typeOne(), typeAtom( 0, null ) )
+    );
+    return result;
 }
 
 // TODO: Implement some additional axiomatic operations like these
@@ -7205,6 +7612,9 @@ function behEventfulSource( opts ) {
             currentVal = newVal;
         } );
         var responsesToGive = [];
+        // TODO: See if this code is prepared for the fact that
+        // readEachEntry may yield entries that overlap with each
+        // other.
         inSig.readEachEntry( function ( entry ) {
             if ( entry.maybeEndMillis.val <= entry.startMillis ) {
                 // Don't bother queuing this response-to-give.
@@ -7297,30 +7707,67 @@ function behEventfulTarget( opts ) {
     
     var result = {};
     result.inType = typeAtom( 0, null );
-    result.outType = typeAtom( 0, null );
+    result.outType = typeOne();
     result.install = function ( context, inSigs, outSigs ) {
         var inSig = inSigs.leafInfo;
-        var outSig = outSigs.leafInfo;
         
         var sentMillis = -1 / 0;
         
         inSig.readEachEntry( function ( entry ) {
-            outSig.history.addEntry( entry );
-            setTimeout( function () {
-                // In case the setTimeout calls get out of order,
+            
+            // TODO: Give Lathe.js a setTimeout equivalent which does
+            // this. The point is that setTimeout has a lower limit on
+            // its time interval, so Lathe.js's _.defer() might
+            // actually use a more responsive technique when the
+            // interval is small, such as postMessage, setImmediate,
+            // process.nextTick, or requestAnimationFrame.
+            //
+            // TODO: See if 10 ms is the right lower bound to use
+            // here.
+            //
+            // TODO: See if we should somehow protect against cases
+            // where _.defer( func ) actually fires sooner than we
+            // want it to.
+            //
+            function quickSetTimeout( millis, func ) {
+                if ( millis < 10 )
+                    _.defer( func );
+                else
+                    setTimeout( func, millis );
+            }
+            
+            quickSetTimeout( entry.startMillis - new Date().getTime(),
+                function () {
+                
+                // In case the quickSetTimeout calls get out of order,
                 // don't send this value.
                 if ( entry.startMillis < sentMillis )
                     return;
                 sentMillis = entry.startMillis;
                 
                 opts.onUpdate.call( {}, entry.maybeData );
-            }, entry.startMillis - new Date().getTime() );
+            } );
         } );
     };
     return result;
 }
 
-function behMouseQuery( opts ) {
+function behEventfulTargetNoDrop( opts ) {
+    return behSeqs(
+        behDupPar( behId( typeAtom( 0, null ) ), behEventfulTarget( opts ) ),
+        behFst( typeAtom( 0, null ), typeOne() )
+    );
+}
+
+function behMouseQuery( opt_opts ) {
+    var opts = _.opt( opt_opts ).or( {
+        // TODO: Keep tuning these constants based on the interval
+        // frequency we actually achieve, rather than the one we shoot
+        // for.
+        intervalMillis: 100,  // 10,
+        stabilityMillis: 500  // 200
+    } ).bam();
+    
     return behEventfulSource( {
         apologyVal: JSON.stringify( null ),
         listenOnUpdate: function ( listener ) {
@@ -7329,20 +7776,19 @@ function behMouseQuery( opts ) {
                     JSON.stringify( [ e.clientX, e.clientY ] ) );
             } } );
         },
-        // TODO: Keep tuning these constants based on the interval
-        // frequency we actually achieve, rather than the one we shoot
-        // for.
-        intervalMillis: 100,  // 10,
-        stabilityMillis: 500  // 200
+        intervalMillis: opts.intervalMillis,
+        stabilityMillis: opts.stabilityMillis
     } );
 }
 
 function behDomDiagnostic( syncOnLinkMetadata ) {
     var display = _.dom( "div", JSON.stringify( null ) );
     syncOnLinkMetadata( { dom: display } );
-    return behEventfulTarget( { onUpdate: function ( newMaybeVal ) {
-        _.dom( display, JSON.stringify( newMaybeVal ) );
-    } } );
+    return behEventfulTargetNoDrop( {
+        onUpdate: function ( newMaybeVal ) {
+            _.dom( display, JSON.stringify( newMaybeVal ) );
+        }
+    } );
 }
 
 
@@ -7416,9 +7862,6 @@ function LambdaLangCode() {}
 LambdaLangCode.prototype.init = function () {
     return this;
 };
-LambdaLangCode.prototype.refineOutType = function ( outType ) {
-    return this;
-};
 
 var lambdaLang = {};
 
@@ -7428,6 +7871,9 @@ lambdaLang.va = function ( name ) {
     name += "";
     
     var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "$" + name;
+    };
     result.getFreeVars = function () {
         var freeVars = makeLambdaLangNameMap();
         freeVars.set( name, true );
@@ -7436,10 +7882,10 @@ lambdaLang.va = function ( name ) {
     result.compile = function (
         varInfoByIndex, varInfoByName, outType ) {
         
-        var remainingEnvType = _.arrFoldr( varInfoByIndex, typeOne(),
-            function ( varInfo, rest ) {
-                return typeTimes( varInfo.type, rest );
-            } );
+        // TODO: See if we can change this to a simple behFst, now
+        // that we only get our own free variables in the environment.
+        var remainingEnvType =
+            lambdaLangVarInfoByIndexToType( varInfoByIndex );
         var seq = [];
         for ( var i = varInfoByName.get( name ).index; 0 < i; i-- ) {
             seq.push( behSnd(
@@ -7453,6 +7899,54 @@ lambdaLang.va = function ( name ) {
     return result;
 };
 
+function lambdaLangVarInfoByIndexToType( varInfoByIndex ) {
+    return _.arrFoldr( varInfoByIndex, typeOne(),
+        function ( varInfo, rest ) {
+        
+        return typeTimes( varInfo.type, rest );
+    } );
+}
+
+function lambdaLangVarInfoByIndexToByName( varInfoByIndex ) {
+    var varInfoByName = makeLambdaLangNameMap();
+    _.arrEach( varInfoByIndex, function ( varInfo, i ) {
+        varInfoByName.set(
+            varInfo.name, { type: varInfo.type, index: i } );
+    } );
+    return varInfoByName;
+}
+
+function behLambdaLang( origVarInfoByIndex, expr, outType ) {
+    var finalFreeVars = expr.getFreeVars();
+    var almostResult = _.arrFoldr( origVarInfoByIndex, {
+        varTypeBefore: typeOne(),
+        varInfoByIndexAfter: [],
+        beh: behId( typeOne() )
+    }, function ( varInfo, r ) {
+        
+        return finalFreeVars.has( varInfo.name ) ? {
+            varTypeBefore: typeTimes( varInfo.type, r.varTypeBefore ),
+            varInfoByIndexAfter:
+                [ varInfo ].concat( r.varInfoByIndexAfter ),
+            beh: behPar( behId( varInfo.type ), r.beh )
+        } : {
+            varTypeBefore: typeTimes( varInfo.type, r.varTypeBefore ),
+            varInfoByIndexAfter: r.varInfoByIndexAfter,
+            beh: behSeqs(
+                behSnd( varInfo.type, r.varTypeBefore ),
+                r.beh
+            )
+        };
+    } );
+    var varInfoByName = lambdaLangVarInfoByIndexToByName(
+        almostResult.varInfoByIndexAfter );
+    return behSeqs(
+        almostResult.beh,
+        expr.compile(
+            almostResult.varInfoByIndexAfter, varInfoByName, outType )
+    );
+}
+
 lambdaLang.fn = function ( argName, body ) {
     if ( !_.isString( argName ) )
         throw new Error();
@@ -7461,9 +7955,12 @@ lambdaLang.fn = function ( argName, body ) {
         throw new Error();
     
     var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "\$" + argName + " -> " + body.toString();
+    };
     result.getFreeVars = function () {
         var freeVars = body.getFreeVars().copy();
-        freeVars.del( name );
+        freeVars.del( argName );
         return freeVars;
     };
     result.compile = function (
@@ -7473,33 +7970,40 @@ lambdaLang.fn = function ( argName, body ) {
             throw new Error();
         var argType = outType.demand;
         var innerOutType = outType.response;
+        
+        // NOTE: We only receive the variables we need, so we don't
+        // need to worry about introducing a duplicate variable name
+        // here. Just to be safe, however, we do a sanity check first.
+        if ( varInfoByName.has( argName ) )
+            throw new Error();
         var innerVarInfoByIndex = [ { name: argName, type: argType }
             ].concat( varInfoByIndex );
-        var innerVarInfoByName = varInfoByName.map(
-            function ( varInfo ) {
-            
-            return { index: varInfo.index + 1, type: varInfo.type };
-        } );
-        innerVarInfoByName.set(
-            argName, { index: 0, type: argType } );
         
         return behClosure( behSeqs(
-            behSwap(
-                _.arrFoldr( varInfoByIndex, typeOne(),
-                    function ( varInfo, rest ) {
-                    
-                    return typeTimes( varInfo.type, rest );
-                } ),
+            behSwap( lambdaLangVarInfoByIndexToType( varInfoByIndex ),
                 argType ),
-            body.compile( innerVarInfoByIndex, innerVarInfoByName,
-                innerOutType )
+            behLambdaLang( innerVarInfoByIndex, body, innerOutType )
         ) );
     };
     return result;
 };
 
+function behDupParLambdaLang( varInfoByIndex,
+    firstExpr, firstOutType, secondExpr, secondOutType ) {
+    
+    return behDupPar(
+        behLambdaLang( varInfoByIndex, firstExpr, firstOutType ),
+        behLambdaLang( varInfoByIndex, secondExpr, secondOutType )
+    );
+}
+
 lambdaLang.call = function ( op, argType, argVal ) {
     var result = new LambdaLangCode().init();
+    result.toString = function () {
+//        return "(" + op.toString() + " " +
+//            typeToString( argType ) + " " + argVal.toString() + ")";
+        return "(" + op.toString() + " " + argVal.toString() + ")";
+    };
     result.getFreeVars = function () {
         return op.getFreeVars().plus( argVal.getFreeVars() );
     };
@@ -7508,11 +8012,8 @@ lambdaLang.call = function ( op, argType, argVal ) {
         
         var opType = typeAnytimeFn( argType, outType, null );
         return behSeqs(
-            behDupPar(
-                op.compile( varInfoByIndex, varInfoByName, opType ),
-                argVal.compile(
-                    varInfoByIndex, varInfoByName, argType )
-            ),
+            behDupParLambdaLang(
+                varInfoByIndex, op, opType, argVal, argType ),
             behCall( opType )
         );
     };
@@ -7524,6 +8025,10 @@ lambdaLang.beh = function ( beh ) {
     // parameter, rather than using the behavior's own inType to
     // determine the time offsets.
     var result = new LambdaLangCode().init();
+    result.toString = function () {
+        // TODO: See if this can be more informative.
+        return "#<beh:" + beh + ">";
+    };
     result.getFreeVars = function () {
         return makeLambdaLangNameMap();
     };
@@ -7536,15 +8041,52 @@ lambdaLang.beh = function ( beh ) {
         
         return behClosure( behSeqs(
             behSnd( typeOne(), typePlusOffsetMillis(
-                diff.offsetMillis, beh.inType ) ),
+                diff.offsetMillis !== null ? diff.offsetMillis : 0,
+                beh.inType ) ),
             beh
         ) );
     };
     return result;
 };
 
-lambdaLang.delay = function ( delayMillis, body ) {
+lambdaLang.useBeh = function ( beh, argVal ) {
+    // TODO: See if we should take some kind of offsetMillis
+    // parameter, rather than using the behavior's own inType to
+    // determine the time offsets.
     var result = new LambdaLangCode().init();
+    result.toString = function () {
+        // TODO: See if this can be more informative.
+        return "#<useBeh:" + beh + "> " + argVal.toString();
+    };
+    result.getFreeVars = function () {
+        return argVal.getFreeVars();
+    };
+    result.compile = function (
+        varInfoByIndex, varInfoByName, outType ) {
+        
+        var diff = typesUnify( outType, beh.outType );
+        if ( !diff )
+            throw new Error();
+        
+        return behSeqs(
+            argVal.compile( varInfoByIndex, varInfoByName,
+                typePlusOffsetMillis(
+                    diff.offsetMillis !== null ?
+                        diff.offsetMillis : 0,
+                    beh.inType ) ),
+            beh
+        );
+    };
+    return result;
+};
+
+lambdaLang.delay = function ( delayMillis, body ) {
+    if ( !isValidDuration( delayMillis ) )
+        throw new Error();
+    var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "#<delay:" + delayMillis + "> " + body.toString();
+    };
     result.getFreeVars = function () {
         return body.getFreeVars();
     };
@@ -7556,6 +8098,174 @@ lambdaLang.delay = function ( delayMillis, body ) {
         return behSeqs(
             body.compile( varInfoByIndex, varInfoByName, midType ),
             behDelay( delayMillis, midType )
+        );
+    };
+    return result;
+};
+
+lambdaLang.one = function () {
+    var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "1";
+    };
+    result.getFreeVars = function () {
+        return makeLambdaLangNameMap();
+    };
+    result.compile = function (
+        varInfoByIndex, varInfoByName, outType ) {
+        
+        if ( outType.op !== "one" )
+            throw new Error();
+        // TODO: See if we can replace this as follows, since we no
+        // longer get more variables in scope than we need.
+//        return behDrop( typeZero() );
+        return behDrop(
+            lambdaLangVarInfoByIndexToType( varInfoByIndex ) );
+    };
+    return result;
+};
+
+lambdaLang.times = function ( first, second ) {
+    var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "(" + first.toString() + " * " +
+            second.toString() + ")";
+    };
+    result.getFreeVars = function () {
+        return first.getFreeVars().plus( second.getFreeVars() );
+    };
+    result.compile = function (
+        varInfoByIndex, varInfoByName, outType ) {
+        
+        if ( outType.op !== "times" )
+            throw new Error();
+        return behDupParLambdaLang( varInfoByIndex,
+            first, outType.first, second, outType.second );
+    };
+    return result;
+};
+
+lambdaLang.fst = function ( secondType, pair ) {
+    var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "#fst " + pair.toString();
+    };
+    result.getFreeVars = function () {
+        return pair.getFreeVars();
+    };
+    result.compile = function (
+        varInfoByIndex, varInfoByName, outType ) {
+        
+        return behSeqs(
+            pair.compile(
+                varInfoByIndex, varInfoByName,
+                typeTimes( outType, secondType ) ),
+            behFst( outType, secondType )
+        );
+    };
+    return result;
+};
+
+lambdaLang.zip = function ( pair ) {
+    var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "#zip " + pair.toString();
+    };
+    result.getFreeVars = function () {
+        return pair.getFreeVars();
+    };
+    result.compile = function (
+        varInfoByIndex, varInfoByName, outType ) {
+        
+        if ( outType.op !== "atom" )
+            throw new Error();
+        return behSeqs(
+            pair.compile(
+                varInfoByIndex, varInfoByName,
+                typeTimes( outType, outType ) ),
+            behZip()
+        );
+    };
+    return result;
+};
+
+lambdaLang.zipTimes = function ( first, second ) {
+    return lambdaLang.zip( lambdaLang.times( first, second ) );
+};
+
+lambdaLang.letPlus = function ( condition, conditionType,
+    leftName, leftThen, rightName, rightThen ) {
+    
+    if ( !(condition instanceof LambdaLangCode) )
+        throw new Error();
+    // TODO: Verify that conditionType is a type.
+    if ( conditionType.op !== "plus" )
+        throw new Error();
+    if ( !_.isString( leftName ) )
+        throw new Error();
+    leftName += "";
+    if ( !_.isString( rightName ) )
+        throw new Error();
+    rightName += "";
+    if ( !(leftThen instanceof LambdaLangCode) )
+        throw new Error();
+    if ( !(rightThen instanceof LambdaLangCode) )
+        throw new Error();
+    
+    // NOTE: This lets us avoid writing variable-shadowing code.
+    var leftFn = lambdaLang.fn( leftName, leftThen );
+    var rightFn = lambdaLang.fn( rightName, rightThen );
+    
+    var result = new LambdaLangCode().init();
+    result.toString = function () {
+        return "(#case " + condition.toString() + " " +
+//            ": " + typeToString( conditionType ) + " " +
+            "in " +
+            "#left " + leftName + " -> " +
+                leftThen.toString() + " ; " +
+            "#right " + rightName + " -> " +
+                rightThen.toString() + ")";
+    };
+    result.getFreeVars = function () {
+        var leftFreeVars = leftThen.getFreeVars().copy();
+        leftFreeVars.del( leftName );
+        var rightFreeVars = rightThen.getFreeVars().copy();
+        rightFreeVars.del( rightName );
+        return condition.getFreeVars().
+            plus( leftFreeVars ).plus( rightFreeVars );
+    };
+    result.compile = function (
+        varInfoByIndex, varInfoByName, outType ) {
+        
+        var $ = lambdaLang;
+        var fnsType = typeTimes(
+            typeAnytimeFn( conditionType.left, outType, null ),
+            typeAnytimeFn( conditionType.right, outType, null ) )
+        return behSeqs(
+            behLambdaLang( varInfoByIndex,
+                $.times(
+                    $.times(
+                        $.fn( leftName, leftThen ),
+                        $.fn( rightName, rightThen ) ),
+                    condition ),
+                typeTimes( fnsType, conditionType ) ),
+            behDisjoin(
+                fnsType, conditionType.left, conditionType.right ),
+            behEither(
+                behSeqs(
+                    behFirst(
+                        behFst( fnsType.first, fnsType.second ),
+                        conditionType.left ),
+                    behCall( fnsType.first )
+                ),
+                behSeqs(
+                    behFirst(
+                        behSnd( fnsType.first, fnsType.second ),
+                        conditionType.right ),
+                    behCall( fnsType.second )
+                )
+            ),
+            behMerge( outType )
         );
     };
     return result;
