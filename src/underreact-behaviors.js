@@ -368,10 +368,28 @@ function makeOffsetMillisMap() {
 function makeAnytimeFnInstallationPair( startMillis, type ) {
     var doStaticInvoke = null;
     var connectionDependencies = [];
+    var connectionDependenciesSealed = false;
     
     var writable = {};
     writable.addConnectionDependency = function ( dependency ) {
+        if ( connectionDependenciesSealed )
+            throw new Error();
         connectionDependencies.push( dependency );
+    };
+    // TODO TRAMPOLINE: Instead of using addOnlyConnectionDependency,
+    // use a trampoline during isConnected.
+    writable.addOnlyConnectionDependency = function ( dependency ) {
+        if ( connectionDependenciesSealed )
+            throw new Error();
+        if ( connectionDependencies.length !== 0 )
+            throw new Error();
+        readable.isConnected = dependency.isConnected;
+        // NOTE: We still keep track of our own connectionDependencies
+        // just in case someone else stole our isConnected before we
+        // could steal dependency.isConnected.
+        // TODO: Make even that case costless.
+        connectionDependencies.push( dependency );
+        connectionDependenciesSealed = true;
     };
     writable.onStaticInvoke = function ( func ) {
         if ( doStaticInvoke !== null || func === null )
@@ -381,12 +399,18 @@ function makeAnytimeFnInstallationPair( startMillis, type ) {
     writable.readFrom = function ( readable ) {
         // NOTE: This is just a convenience method.
         
-        writable.addConnectionDependency( readable );
+        writable.addOnlyConnectionDependency( readable );
         writable.onStaticInvoke(
             function ( context, delayMillis, inWires, outWires ) {
             
-            readable.doStaticInvoke(
-                context, delayMillis, inWires, outWires );
+            // TODO TRAMPOLINE: Stop using onBegin as a trampoline,
+            // and use a more dedicated trampolining technique as seen
+            // in Era.
+            context.onBegin( function () {
+                readable.doStaticInvoke(
+                    context, delayMillis, inWires, outWires );
+                return !!"wasAbleToFinish";
+            } );
         } );
     };
     
@@ -465,11 +489,21 @@ function makeContext( startMillis, membrane ) {
             n !== 0;
             n = onBeginListeners.length ) {
             
-            onBeginListeners = _.arrRem( onBeginListeners,
-                function ( func ) {
-                
-                return func();
-            } );
+            var nextOnBeginListeners = [];
+            while ( onBeginListeners.length !== 0 ) {
+                var func = onBeginListeners.shift();
+                if ( !func() )
+                    nextOnBeginListeners.push( func );
+            }
+            onBeginListeners = nextOnBeginListeners;
+            // NOTE: We currently can't use this implementation
+            // because the functions may call onBegin again. See one
+            // of the other comments labeled "TODO TRAMPOLINE".
+//            onBeginListeners = _.arrRem( onBeginListeners,
+//                function ( func ) {
+//                
+//                return func();
+//            } );
             
             // If we're probably in an infinite loop, throw an error.
             if ( onBeginListeners.length === n )
@@ -1716,8 +1750,8 @@ function behClosure( beh ) {
             } else if ( type.op === "anytimeFn" ) {
                 // Do nothing.
                 
-                // NOTE: We already use addConnectionDependency and
-                // onStaticInvoke elsewhere.
+                // NOTE: We already use addOnlyConnectionDependency
+                // and onStaticInvoke elsewhere.
                 
             } else {
                 throw new Error();
@@ -1742,7 +1776,7 @@ function behClosure( beh ) {
                     // delayAddEntry elsewhere.
                     
                 } else if ( type.op === "anytimeFn" ) {
-                    outWire.addConnectionDependency( inWire );
+                    outWire.addOnlyConnectionDependency( inWire );
                     outWire.onStaticInvoke( function (
                         context, totalDelayMillis, inWires, outWires
                         ) {
@@ -1831,7 +1865,7 @@ function behDelay( delayMillis, type ) {
                     } );
                 } );
             } else if ( type.op === "anytimeFn" ) {
-                outWire.addConnectionDependency( inWire );
+                outWire.addOnlyConnectionDependency( inWire );
                 outWire.onStaticInvoke( function (
                     context, totalDelayMillis, inWires, outWires ) {
                     
