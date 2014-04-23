@@ -2422,11 +2422,12 @@ function behDemandMonitor( defer ) {
 // feedback loops don't grind the entire page to a halt. However,
 // those loops will still execute forever, so be careful.
 //
-// NOTE: This only supports JavaScript numbers as states. When
-// multiple rules apply at once, we choose the rule which leads to the
-// lowest state. If that still doesn't narrow it down, we choose the
-// rule with the lowest cooldown. If we need to choose a rule at the
-// same instant the ruleset is updating, we use the older ruleset.
+// NOTE: When multiple rules apply at once, we choose the rule which
+// leads to the lowest state according to the given compareStates
+// function. If that still doesn't narrow it down, we choose the rule
+// with the lowest cooldown. If the ruleset is updating and we need to
+// choose a rule at the same time, we choose it from the pre-update
+// ruleset.
 //
 // TODO: Implement resource spaces so that we can provide dynamic
 // acquisition of animated state resources while permitting external

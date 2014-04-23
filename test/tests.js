@@ -255,12 +255,27 @@ function makeConvenientHarness() {
         // frequency we actually achieve, rather than the one we shoot
         // for.
         var intervalMillis = 10;
-        var stabilityMillis = 500;  // 20;
         var otherOutStabilityMillis = 1000000;
+        var nowMillis = new Date().getTime();
         setInterval( function () {
-            var nowMillis = new Date().getTime();
-            inPair.writable.sig.history.setData(
-                [], nowMillis, nowMillis + stabilityMillis );
+            var prevMillis = nowMillis;
+            nowMillis = new Date().getTime();
+            var intervalAchievedMillis = nowMillis - prevMillis;
+            if ( intervalMillis * 5 < intervalAchievedMillis ) {
+                // We're probably an out-of-focus tab, so let's let
+                // the app be inactive for a while.
+                return;
+            }
+            
+            // NOTE: To keep the gameplay smooth(ish), we don't let
+            // gaps of inactivity appear while the tab is in focus.
+            //
+            // TODO: See if that's a good idea. If not, we can simply
+            // replace prevMillis with nowMillis here.
+            //
+            inPair.writable.sig.history.setData( [],
+                prevMillis, nowMillis + intervalAchievedMillis * 2 );
+            
             membranePair.a.membrane.raiseOtherOutPermanentUntilMillis(
                 nowMillis + otherOutStabilityMillis );
             membranePair.b.membrane.raiseOtherOutPermanentUntilMillis(
